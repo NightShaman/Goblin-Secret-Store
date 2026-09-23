@@ -1,5 +1,5 @@
 /** Operator-facing vault. Sensitive inputs and the local session live only in this mounted instance. */
-export function mountManagement({ root, api }) {
+export function mountManagement({ root, detailRoot = null, api, section = 'credentials' }) {
   const abort = new AbortController();
   let live = true, session = '', status, records = [], templates = [], agents = [], selected = null, busy = false;
   const el = (tag, text, className) => { const n = document.createElement(tag); if (text != null) n.textContent = text; if (className) n.className = className; return n; };
@@ -12,7 +12,7 @@ export function mountManagement({ root, api }) {
 .gss{box-sizing:border-box;width:100%;min-width:0;color:var(--text);line-height:1.5}.gss *{box-sizing:border-box}.gss [hidden]{display:none!important}
 .gss h1{font-size:24px;margin:0}.gss h2{font-size:18px;margin:0 0 8px}.gss h3{font-size:14px;margin:16px 0 7px}.gss p{margin:6px 0 14px;overflow-wrap:anywhere}.gss .gss-muted{color:var(--text-muted,var(--muted))}.gss .gss-head,.gss .gss-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.gss .gss-head{justify-content:space-between;margin-bottom:20px}
 .gss .gss-layout{display:grid;grid-template-columns:minmax(190px,260px) minmax(0,1fr);gap:24px;align-items:start}.gss .gss-list{display:grid;gap:5px}.gss .gss-list button{text-align:left;width:100%;overflow-wrap:anywhere}.gss .gss-list button[aria-current=true]{border-color:var(--accent-border);background:var(--accent-muted)}
-.gss .gss-panel{min-width:0;padding-left:24px;border-left:1px solid var(--line)}.gss .gss-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.gss .gss-field{display:grid;gap:5px;min-width:0;font-size:12px;font-weight:700;color:var(--text-muted,var(--muted))}.gss .gss-field input,.gss .gss-field select,.gss .gss-field textarea{width:100%;min-width:0;min-height:36px;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface-input);color:var(--text);font:inherit}.gss .gss-field textarea{min-height:100px;resize:vertical}.gss button{min-height:34px;padding:6px 11px;border:1px solid var(--line);border-radius:6px;background:var(--surface-input);color:var(--text);cursor:pointer;font:inherit}.gss button:hover:not(:disabled){border-color:var(--accent-border);background:var(--surface-hover)}.gss button:disabled{opacity:.55;cursor:not-allowed}.gss button.primary{border-color:var(--accent-border);background:var(--accent-muted);font-weight:700}.gss button.danger{border-color:var(--warning,var(--accent-border))}.gss .gss-actions{margin:16px 0}.gss .gss-notice:not(:empty){padding:9px 0}.gss .gss-notice[role=alert]{color:var(--warning,var(--accent))}.gss .gss-choice{display:flex;align-items:center;gap:8px;margin:6px 0}.gss .gss-choice input{accent-color:var(--accent)}.gss details{margin:22px 0;border-top:1px solid var(--line);padding-top:14px}.gss summary{cursor:pointer;font-weight:700}.gss .gss-audit{list-style:none;padding:0}.gss .gss-audit li{padding:8px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.gss .gss-confirm{padding:12px;border:1px solid var(--warning,var(--accent-border));border-radius:6px}.gss :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.gss .gss-primary-panel{min-width:0}.gss .gss-panel{min-width:0;padding-left:24px;border-left:1px solid var(--line)}.gss .gss-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.gss .gss-field{display:grid;gap:5px;min-width:0;font-size:12px;font-weight:700;color:var(--text-muted,var(--muted))}.gss .gss-field input,.gss .gss-field select,.gss .gss-field textarea{width:100%;min-width:0;min-height:36px;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface-input);color:var(--text);font:inherit}.gss .gss-field textarea{min-height:100px;resize:vertical}.gss button{min-height:34px;padding:6px 11px;border:1px solid var(--line);border-radius:6px;background:var(--surface-input);color:var(--text);cursor:pointer;font:inherit}.gss button:hover:not(:disabled){border-color:var(--accent-border);background:var(--surface-hover)}.gss button:disabled{opacity:.55;cursor:not-allowed}.gss button.primary{border-color:var(--accent-border);background:var(--accent-muted);font-weight:700}.gss button.danger{border-color:var(--warning,var(--accent-border))}.gss .gss-actions{margin:16px 0}.gss .gss-notice:not(:empty){padding:9px 0}.gss .gss-notice[role=alert]{color:var(--warning,var(--accent))}.gss .gss-choice{display:flex;align-items:center;gap:8px;margin:6px 0}.gss .gss-choice input{accent-color:var(--accent)}.gss details{margin:22px 0;border-top:1px solid var(--line);padding-top:14px}.gss summary{cursor:pointer;font-weight:700}.gss .gss-audit{list-style:none;padding:0}.gss .gss-audit li{padding:8px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.gss .gss-confirm{padding:12px;border:1px solid var(--warning,var(--accent-border));border-radius:6px}.gss :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media(max-width:760px){.gss .gss-layout{grid-template-columns:1fr}.gss .gss-panel{border-left:0;border-top:1px solid var(--line);padding:18px 0 0}.gss .gss-fields{grid-template-columns:1fr}}
 `; view.append(style);
   const content = el('div'); view.append(content, notice); root.replaceChildren(view);
@@ -68,18 +68,35 @@ export function mountManagement({ root, api }) {
     } catch (e) { if (live) { content.replaceChildren(heading('Vault unavailable'), button('Retry', () => void load())); message(`Could not load vault: ${err(e)}`, true); } }
   }
   function render() {
-    const head = heading(`${records.length} credential${records.length === 1 ? '' : 's'} · protected values are write-only`);
-    if (status.authMode === 'local') head.append(button('Log out', () => void operation(async () => { try { await request('/logout', { method: 'POST' }); } finally { session = ''; await load(); } }, 'Logged out.')));
-    const layout = el('div', null, 'gss-layout'), sidebar = el('nav'), panel = el('section', null, 'gss-panel'); sidebar.setAttribute('aria-label', 'Credentials');
-    sidebar.append(button('New credential', () => { selected = 'new'; render(); }, 'primary'));
+    const title = section === 'sharing' ? 'Agent sharing' : section === 'backup' ? 'Backup & restore' : section === 'vault-access' ? 'Vault access' : 'Credentials';
+    const head = heading(title);
+    if (section === 'vault-access') {
+      const details = el('section');
+      details.append(el('h2', 'Vault access'), el('p', status.authMode === 'core' ? 'Managed by your verified Burrow operator login.' : 'Vault unlocked for this view. The local session stays in memory and expires after one hour.', 'gss-muted'));
+      if (status.authMode === 'local') details.append(button('Log out', () => void operation(async () => { try { await request('/logout', { method: 'POST' }); } finally { session = ''; await load(); } }, 'Logged out.')));
+      content.replaceChildren(head, details);
+      return;
+    }
+    if (section === 'backup') {
+      content.replaceChildren(head);
+      extras(content);
+      return;
+    }
+    const layout = el('div', null, detailRoot ? 'gss-primary' : 'gss-layout'), sidebar = el('nav'), panel = el('section', null, detailRoot ? 'gss-primary-panel' : 'gss-panel');
+    sidebar.setAttribute('aria-label', 'Credentials');
+    if (section === 'credentials') sidebar.append(button('New credential', () => { selected = 'new'; render(); }, 'primary'));
     const list = el('div', null, 'gss-list');
-    if (!records.length) list.append(el('p', 'No credentials yet. Create one to get started.', 'gss-muted'));
+    if (!records.length) list.append(el('p', section === 'sharing' ? 'No credentials to share yet. Create one under Credentials first.' : 'No credentials yet. Create one to get started.', 'gss-muted'));
     for (const record of records) { const b = button(record.name, () => { selected = record.id; render(); }); b.setAttribute('aria-current', String(selected === record.id)); list.append(b); }
-    sidebar.append(list); layout.append(sidebar, panel);
-    if (selected === 'new' || records.some(r => r.id === selected)) editor(panel, records.find(r => r.id === selected));
-    else panel.append(el('h2', 'Select a credential'), el('p', 'Names and public fields are metadata. Never put a secret in them.', 'gss-muted'));
+    sidebar.append(list);
+    if (detailRoot) layout.append(panel);
+    else layout.append(sidebar, panel);
+    const record = records.find(r => r.id === selected);
+    if (section === 'sharing' && record) access(panel, record);
+    else if (section === 'credentials' && (selected === 'new' || record)) editor(panel, record);
+    else panel.append(el('h2', 'Select a credential'), el('p', section === 'sharing' ? 'Choose a credential to manage agent access.' : 'Names and public fields are metadata. Never put a secret in them.', 'gss-muted'));
     content.replaceChildren(head, layout);
-    extras(content);
+    if (detailRoot) detailRoot.replaceChildren(sidebar);
   }
   function editor(panel, record) {
     const form = el('form'); form.append(el('h2', record ? 'Edit credential' : 'New credential'));
@@ -149,10 +166,9 @@ export function mountManagement({ root, api }) {
       if (live) save.disabled = false;
     });
     panel.append(form);
-    if (record) access(panel, record);
   }
   function access(panel, record) {
-    const box = el('section'); box.append(el('h3', 'Agent access'), el('p', record.acl.active ? 'Explicit access is independent of Burrow tool grants.' : 'Restored assignment inactive. Regrant access explicitly; editing the record does not reactivate it.', 'gss-muted'));
+    const box = el('section'); box.append(el('h2', `Agent access · ${record.name}`), el('p', record.acl.active ? 'Explicit access is independent of Burrow tool grants.' : 'Restored assignment inactive. Regrant access explicitly; editing the record does not reactivate it.', 'gss-muted'));
     const mode = el('select'); for (const [value, text] of [['none', 'No agents'], ['agents', 'Selected agents'], ['all', 'All agents']]) { const option = el('option', text); option.value = value; mode.append(option); } mode.value = record.acl.mode; box.append(label('Access scope', mode));
     const choices = el('div'); const chosen = new Map(); for (const agent of agents) { const checkbox = input('checkbox'); checkbox.checked = record.acl.agents.includes(agent.id); checkbox.disabled = agent.enabled === false; chosen.set(agent.id, checkbox); const item = el('label', null, 'gss-choice'); item.append(checkbox, el('span', `${agent.name || agent.id}${agent.enabled === false ? ' · unavailable' : ''}`)); choices.append(item); }
     for (const id of record.acl.agents) if (!chosen.has(id)) choices.append(el('p', `${id} · unavailable; reassign access to remove this stale ID`, 'gss-muted'));
@@ -167,7 +183,7 @@ export function mountManagement({ root, api }) {
     }, 'primary')); panel.append(box);
   }
   function extras(container) {
-    const portability = el('details'); portability.append(el('summary', 'Encrypted backup and restore'));
+    const portability = el('section'); portability.append(el('h2', 'Encrypted backup and restore'));
     portability.append(el('p', 'Choose a separate backup passphrase (at least 12 characters). Keep the downloaded file and passphrase somewhere safe. Backups do not include this installation’s login password or audit history.', 'gss-muted'));
     const pass = input('password'); pass.minLength = 12; pass.autocomplete = 'new-password'; portability.append(label('Backup passphrase', pass));
     portability.append(button('Download encrypted backup', () => {
@@ -192,5 +208,5 @@ export function mountManagement({ root, api }) {
   }
   content.replaceChildren(heading('Loading vault…'));
   void load();
-  return () => { live = false; abort.abort(); session = ''; root.replaceChildren(); };
+  return () => { live = false; abort.abort(); session = ''; root.replaceChildren(); detailRoot?.replaceChildren(); };
 }
