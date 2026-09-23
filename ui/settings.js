@@ -7,11 +7,11 @@ export const settingsSections = [
   { id: 'backup', label: 'Backup & restore' },
 ];
 
-export function mountSettings({ section, primary, overflow, api }) {
+export function mountSettings({ section, primary, overflow, api, runtimeScope, modId }) {
   const root = document.createElement('section');
   primary.replace(root);
   const detailRoot = overflow ? document.createElement('section') : null;
   if (detailRoot) { detailRoot.className = 'gss'; overflow.replace(detailRoot); }
-  const cleanup = mountManagement({ root, detailRoot, api, section });
+  const cleanup = mountManagement({ root, detailRoot, api, section, runtimeScope, modId });
   return () => { cleanup(); primary.clear(); overflow?.clear(); };
 }

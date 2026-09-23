@@ -1,7 +1,9 @@
-/** Operator-facing vault. Sensitive inputs and the local session live only in this mounted instance. */
-export function mountManagement({ root, detailRoot = null, api, section = 'credentials' }) {
+import { vaultSession } from './session.js';
+/** Operator-facing vault. Sensitive inputs live in this mount; the local session lives in scoped module memory. */
+export function mountManagement({ root, detailRoot = null, api, section = 'credentials', runtimeScope, modId }) {
   const abort = new AbortController();
-  let live = true, session = '', status, records = [], templates = [], agents = [], selected = null, busy = false;
+  const session = vaultSession(runtimeScope, modId);
+  let live = true, status, records = [], templates = [], agents = [], selected = null, busy = false;
   const el = (tag, text, className) => { const n = document.createElement(tag); if (text != null) n.textContent = text; if (className) n.className = className; return n; };
   const button = (text, fn, className) => { const n = el('button', text, className); n.type = 'button'; n.addEventListener('click', fn); return n; };
   const label = (text, input) => { const n = el('label', text, 'gss-field'); n.append(input); return n; };
@@ -20,10 +22,20 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
   const err = e => e?.message || 'Request failed';
   async function request(path, options = {}) {
     const headers = { ...options.headers };
-    if (session) headers['X-GSS-Session'] = session;
+    const sentToken = session.current();
+    if (sentToken) headers['X-GSS-Session'] = sentToken;
     if (options.body !== undefined) headers['content-type'] = 'application/json';
-    try { return await api(path, { ...options, headers, signal: abort.signal }); }
-    catch (e) { if (e?.status === 401 || e?.statusCode === 401) { session = ''; if (live) void load(); } throw e; }
+    try {
+      const result = await api(path, { ...options, headers, signal: abort.signal });
+      if (path === '/status') {
+        if (session.current() !== sentToken) return request('/status');
+        session.observe(result, sentToken);
+      }
+      return result;
+    } catch (e) {
+      if ((e?.status === 401 || e?.statusCode === 401) && path !== '/login' && path !== '/bootstrap') session.invalidate(sentToken);
+      throw e;
+    }
   }
   const write = (path, method, body) => request(path, { method, body: JSON.stringify(body) });
   async function operation(action, success) {
@@ -53,7 +65,7 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
       if (confirm && password.value !== confirm.value) { message('Passwords do not match.', true); return; }
       const secret = password.value; password.value = ''; if (confirm) confirm.value = '';
       submit.disabled = true;
-      await operation(async () => { const result = await write(first ? '/bootstrap' : '/login', 'POST', { password: secret }); if (!live) return; session = result.session; await load(); }, 'Vault unlocked.');
+      await operation(async () => { const result = await write(first ? '/bootstrap' : '/login', 'POST', { password: secret }); if (!live) return; session.set(result); await load(); }, 'Vault unlocked.');
       if (live) submit.disabled = false;
     });
   }
@@ -73,7 +85,7 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
     if (section === 'vault-access') {
       const details = el('section');
       details.append(el('h2', 'Vault access'), el('p', status.authMode === 'core' ? 'Managed by your verified Burrow operator login.' : 'Vault unlocked for this view. The local session stays in memory and expires after one hour.', 'gss-muted'));
-      if (status.authMode === 'local') details.append(button('Log out', () => void operation(async () => { try { await request('/logout', { method: 'POST' }); } finally { session = ''; await load(); } }, 'Logged out.')));
+      if (status.authMode === 'local') details.append(button('Log out', () => void operation(async () => { const token = session.current(); try { await request('/logout', { method: 'POST' }); } finally { session.invalidate(token); await load(); } }, 'Logged out.')));
       content.replaceChildren(head, details);
       return;
     }
@@ -208,5 +220,5 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
   }
   content.replaceChildren(heading('Loading vault…'));
   void load();
-  return () => { live = false; abort.abort(); session = ''; root.replaceChildren(); detailRoot?.replaceChildren(); };
+  return () => { live = false; abort.abort(); root.replaceChildren(); detailRoot?.replaceChildren(); };
 }

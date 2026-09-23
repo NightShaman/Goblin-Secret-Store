@@ -1,17 +1,32 @@
+import { vaultSession } from './session.js';
 /** Read-only audit. Authentication and records remain owned by this mod. */
-export function mountArchive({ root, api, date = '' }) {
+export function mountArchive({ root, api, date = '', runtimeScope, modId }) {
   const abort = new AbortController();
-  let live = true, session = '', cursor = null, busy = false, refreshPending = false;
+  const session = vaultSession(runtimeScope, modId);
+  let live = true, cursor = null, busy = false, refreshPending = false;
   const el = (tag, text) => { const n = document.createElement(tag); if (text) n.textContent = text; return n; };
   const content = el('section'), notice = el('p'); notice.setAttribute('role', 'status');
   root.replaceChildren(content, notice);
-  const request = (path, init = {}) => api(path, { ...init, signal: abort.signal, headers: { 'content-type': 'application/json', ...(session ? { 'X-GSS-Session': session } : {}) } });
+  async function request(path, init = {}) {
+    const sentToken = session.current();
+    try {
+      const result = await api(path, { ...init, signal: abort.signal, headers: { 'content-type': 'application/json', ...(sentToken ? { 'X-GSS-Session': sentToken } : {}) } });
+      if (path === '/status') {
+        if (session.current() !== sentToken) return request('/status');
+        session.observe(result, sentToken);
+      }
+      return result;
+    } catch (e) {
+      if ((e?.status === 401 || e?.statusCode === 401) && path !== '/login') session.invalidate(sentToken);
+      throw e;
+    }
+  }
   const button = (text, fn) => { const n = el('button', text); n.type = 'button'; n.addEventListener('click', fn); return n; };
   async function run(fn) {
     if (!live || busy) return;
     busy = true; notice.textContent = 'Loading…';
     try { await fn(); if (live) notice.textContent = ''; }
-    catch (e) { if (live) { notice.textContent = e?.message || 'Audit unavailable'; notice.setAttribute('role', 'alert'); if (e?.status === 401 || e?.statusCode === 401) { session = ''; content.replaceChildren(button('Sign in again', () => run(load))); } } }
+    catch (e) { if (live) { notice.textContent = e?.message || 'Audit unavailable'; notice.setAttribute('role', 'alert'); if (e?.status === 401 || e?.statusCode === 401) { content.replaceChildren(button('Sign in again', () => run(load))); } } }
     finally { busy = false; if (live && refreshPending) { refreshPending = false; void run(load); } }
   }
   async function load() {
@@ -22,11 +37,11 @@ export function mountArchive({ root, api, date = '' }) {
       if (status.authMode !== 'local' || !status.initialized) { content.append(el('p', status.authMode === 'local' ? 'Initialize the vault in Settings before reading audit history.' : 'Sign in to Burrow to read audit history.')); return; }
       const form = el('form'), label = el('label', 'Vault password'), password = el('input'); password.type = 'password'; password.autocomplete = 'current-password'; password.required = true;
       label.append(password); const submit = el('button', 'Unlock audit'); submit.type = 'submit'; form.append(label, submit); content.append(form);
-      form.addEventListener('submit', e => { e.preventDefault(); const value = password.value; password.value = ''; void run(async () => { const result = await request('/login', { method: 'POST', body: JSON.stringify({ password: value }) }); if (!live) return; session = result.session; await load(); }); });
+      form.addEventListener('submit', e => { e.preventDefault(); const value = password.value; password.value = ''; void run(async () => { const result = await request('/login', { method: 'POST', body: JSON.stringify({ password: value }) }); if (!live) return; session.set(result); await load(); }); });
       return;
     }
     content.append(el('p', date ? `UTC date: ${date}` : 'All dates (UTC).'));
-    if (status.authMode === 'local') content.append(button('Log out', () => run(async () => { try { await request('/logout', { method: 'POST' }); } finally { session = ''; if (live) await load(); } })));
+    if (status.authMode === 'local') content.append(button('Log out', () => run(async () => { const token = session.current(); try { await request('/logout', { method: 'POST' }); } finally { session.invalidate(token); if (live) await load(); } })));
     const list = el('ul'), more = button('Load earlier audit events', () => run(page)); content.append(list, more); cursor = null;
     async function page() {
       const query = new URLSearchParams({ ...(requestedDate ? { date: requestedDate } : {}), ...(cursor ? { before: cursor } : {}) });
@@ -47,6 +62,6 @@ export function mountArchive({ root, api, date = '' }) {
       if (busy) refreshPending = true;
       else void run(load);
     },
-    unmount() { live = false; session = ''; refreshPending = false; abort.abort(); root.replaceChildren(); },
+    unmount() { live = false; refreshPending = false; abort.abort(); root.replaceChildren(); },
   };
 }

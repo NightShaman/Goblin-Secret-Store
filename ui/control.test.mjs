@@ -19,7 +19,7 @@ async function fixture(handler, fn, section = 'credentials') {
   const previous = globalThis.document;
   globalThis.document = { createElement: tag => new Element(tag) };
   const root = new Element('root'), calls = [];
-  const cleanup = mountControl({ root, section, api: async (path, init) => { calls.push([path, init]); return handler(path, init); } });
+  const cleanup = mountControl({ root, section, runtimeScope: 'local', modId: 'gss-test-fixture', api: async (path, init) => { calls.push([path, init]); return handler(path, init); } });
   try { await flush(); await fn({ root, calls, find: (tag, text) => root.descendants().find(n => n.tagName === tag && n.textContent === text) }); }
   finally { cleanup(); globalThis.document = previous; }
 }
@@ -29,7 +29,7 @@ const base = (path) => {
   if (path === '/agents') return [{ id: 'a', name: 'Agent A', enabled: true }];
 };
 test('first-visitor claim uses POST bootstrap and retains session in memory only', async () => fixture((path, init) => {
-  if (path === '/status') return { authMode: 'local', initialized: false, authenticated: init?.headers?.['X-GSS-Session'] === 'local-session' };
+  if (path === '/status') return { authMode: 'local', initialized: Boolean(init?.headers?.['X-GSS-Session']), authenticated: init?.headers?.['X-GSS-Session'] === 'local-session' };
   if (path === '/bootstrap') return { session: 'local-session', expiresAt: Date.now() + 1000 };
   if (path === '/records') return { records: [] };
   return base(path);
@@ -84,7 +84,7 @@ test('settings mounts management without duplicate audit', async () => {
   const old = globalThis.document; globalThis.document = { createElement: tag => new Element(tag) };
   try {
     const primary = { replace(node) { this.node = node; }, clear() { this.node = null; } };
-    const cleanup = mountSettings({ section: 'credentials', primary, api: async path => path === '/records' ? { records: [] } : base(path) });
+    const cleanup = mountSettings({ section: 'credentials', primary, runtimeScope: 'local', modId: 'gss-settings-test', api: async path => path === '/records' ? { records: [] } : base(path) });
     await flush();
     assert.deepEqual(settingsSections.map(s => s.id), ['credentials', 'sharing', 'vault-access', 'backup']);
     const text = primary.node.descendants().map(n => n.textContent).join(' ');
@@ -105,7 +105,7 @@ test('each Settings selection mounts only its own management surface and clears 
       ['vault-access', 'Vault access', 'New credential'],
       ['backup', 'Download encrypted backup', 'New credential'],
     ]) {
-      const cleanup = mountSettings({ section, primary, overflow, api }); await flush();
+      const cleanup = mountSettings({ section, primary, overflow, api, runtimeScope: 'local', modId: 'gss-sections-test' }); await flush();
       assert.ok((section === 'credentials' ? overflow.node : primary.node).descendants().some(n => n.textContent === visible), `${section} should show ${visible}`);
       assert.ok(![...primary.node.descendants(), ...overflow.node.descendants()].some(n => n.textContent === absent), `${section} should not show ${absent}`);
       assert.ok(!has('Audit history'));
@@ -212,10 +212,10 @@ test('private key starts masked and multiline mode explicitly warns and can re-m
 test('archive authenticates locally, forwards date and walks cursor without management reads', async () => {
   const old = globalThis.document; globalThis.document = { createElement: tag => new Element(tag) };
   const root = new Element('root'), calls = [];
-  const cleanup = mountArchive({ root, date: '2026-09-23', api: async (path, init) => {
+  const cleanup = mountArchive({ root, date: '2026-09-23', runtimeScope: 'local', modId: 'gss-archive-test', api: async (path, init) => {
     calls.push([path, init]);
     if (path === '/status') return { authMode: 'local', initialized: true, authenticated: init.headers['X-GSS-Session'] === 'session' };
-    if (path === '/login') return { session: 'session' };
+    if (path === '/login') return { session: 'session', expiresAt: Date.now() + 3600000 };
     assert.match(path, /^\/audit\?/); assert.equal(init.headers['X-GSS-Session'], 'session');
     const query = new URLSearchParams(path.split('?')[1]); assert.equal(query.get('date'), '2026-09-23');
     return { events: [{ at: 'now', action: 'use', outcome: 'ok' }], nextCursor: query.has('before') ? null : '42' };
@@ -230,7 +230,7 @@ test('archive authenticates locally, forwards date and walks cursor without mana
   } finally { cleanup.unmount(); globalThis.document = old; }
 });
 
-test('Archive date updates retain only the mount-local session, reset pagination, and preserve logout/unmount', async () => {
+test('Archive date updates retain the shared session, reset pagination, and preserve logout/unmount', async () => {
   const previous = globalThis.document, storage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   globalThis.document = { createElement: tag => new Element(tag) };
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('Archive must not use localStorage'); } });
@@ -239,7 +239,7 @@ test('Archive date updates retain only the mount-local session, reset pagination
   const api = async (path, init) => {
     calls.push([path, init]);
     if (path === '/status') return { authMode: 'local', initialized: true, authenticated: init.headers['X-GSS-Session'] === 'mount-session' };
-    if (path === '/login') return { session: 'mount-session' };
+    if (path === '/login') return { session: 'mount-session', expiresAt: Date.now() + 3600000 };
     if (path === '/logout') return {};
     if (path.startsWith('/audit?')) {
       if (expired) throw Object.assign(new Error('Session expired'), { status: 401 });
@@ -248,7 +248,7 @@ test('Archive date updates retain only the mount-local session, reset pagination
     }
     throw new Error(path);
   };
-  const mount = mountArchive({ root, api, date: '2026-09-23' });
+  const mount = mountArchive({ root, api, date: '2026-09-23', runtimeScope: 'local', modId: 'gss-archive-date-test' });
   try {
     await flush();
     const password = root.descendants().find(n => n.type === 'password'); password.value = 'test-password';
@@ -275,7 +275,7 @@ test('Archive date updates retain only the mount-local session, reset pagination
     mount.unmount();
     assert.ok(calls.every(([, init]) => init.signal.aborted));
     const count = calls.length; mount.update({ date: '' }); await flush(); assert.equal(calls.length, count);
-    const fresh = mountArchive({ root, api, date: '' }); await flush();
+    const fresh = mountArchive({ root, api, date: '', runtimeScope: 'local', modId: 'gss-archive-date-test' }); await flush();
     assert.equal(calls.at(-1)[1].headers['X-GSS-Session'], undefined);
     root.descendants().find(n => n.type === 'password').value = 'test-password';
     root.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
@@ -288,4 +288,98 @@ test('Archive date updates retain only the mount-local session, reset pagination
     mount.unmount(); globalThis.document = previous;
     if (storage) Object.defineProperty(globalThis, 'localStorage', storage); else delete globalThis.localStorage;
   }
+});
+
+// Dynamic module loading mirrors Burrow's separate Settings/Archive imports and exercises shared module memory.
+test('Settings remount and Archive import share only a matching runtime/mod session', async () => {
+  const previous = globalThis.document;
+  globalThis.document = { createElement: tag => new Element(tag) };
+  const { mountSettings: settings } = await import('./settings.js?mount=one');
+  const { mountArchive: archive } = await import('./archive.js?mount=two');
+  const apiCalls = [];
+  const api = async (path, init = {}) => {
+    apiCalls.push([path, init.headers?.['X-GSS-Session']]);
+    const authenticated = init.headers?.['X-GSS-Session'] === 'shared-session';
+    if (path === '/status') return { authMode: 'local', initialized: true, authenticated };
+    if (path === '/login') return { session: 'shared-session', expiresAt: Date.now() + 3600000 };
+    if (path === '/records') return { records: [] };
+    if (path === '/templates') return { templates: [] };
+    if (path === '/agents') return { agents: [] };
+    if (path.startsWith('/audit?')) return { events: [], nextCursor: null };
+    if (path === '/logout') return { ok: true };
+    throw new Error(path);
+  };
+  const primary = { replace(node) { this.node = node; }, clear() { this.node = null; } }, root = new Element('root');
+  const context = { modId: 'gss-session-flow', runtimeScope: 'local', api };
+  let cleanup, panel;
+  try {
+    cleanup = settings({ ...context, section: 'credentials', primary }); await flush();
+    primary.node.descendants().find(n => n.type === 'password').value = 'password';
+    await primary.node.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
+    cleanup(); assert.equal(primary.node, null);
+    cleanup = settings({ ...context, section: 'sharing', primary }); await flush();
+    assert.ok(primary.node.descendants().some(n => n.textContent === 'Agent sharing'));
+    assert.equal(primary.node.descendants().some(n => n.type === 'password'), false);
+    cleanup(); cleanup = null;
+    panel = archive({ ...context, root }); await flush();
+    assert.equal(root.descendants().some(n => n.type === 'password'), false);
+    assert.ok(apiCalls.some(([path, token]) => path.startsWith('/audit?') && token === 'shared-session'));
+    panel.unmount(); panel = null;
+    const isolatedRoot = new Element('root');
+    const isolated = archive({ ...context, modId: 'other-mod', root: isolatedRoot }); await flush();
+    assert.ok(isolatedRoot.descendants().some(n => n.type === 'password'));
+    isolated.unmount();
+    const otherRuntime = archive({ ...context, runtimeScope: 'another-runtime', root: isolatedRoot }); await flush();
+    assert.ok(isolatedRoot.descendants().some(n => n.type === 'password'));
+    otherRuntime.unmount();
+    panel = archive({ ...context, root }); await flush();
+    root.descendants().find(n => n.textContent === 'Log out').click(); await flush();
+    panel.unmount(); panel = null;
+    cleanup = settings({ ...context, section: 'vault-access', primary }); await flush();
+    assert.ok(primary.node.descendants().some(n => n.type === 'password'));
+  } finally { cleanup?.(); panel?.unmount(); globalThis.document = previous; }
+});
+
+test('shared session expires at server deadline, rejects stale failures and observes auth-mode change', async () => {
+  const { vaultSession } = await import('./session.js');
+  const state = vaultSession('local', 'gss-expiry-test');
+  const previous = globalThis.Date;
+  let now = previous.now();
+  globalThis.Date = class extends previous { static now() { return now; } };
+  try {
+    state.set({ session: 'old', expiresAt: now + 3600000 });
+    state.set({ session: 'new', expiresAt: now + 3600000 });
+    state.invalidate('old'); assert.equal(state.current(), 'new');
+    state.observe({ authMode: 'local', initialized: true, authenticated: false }, 'old'); assert.equal(state.current(), 'new');
+    now += 3600000;
+    assert.equal(state.current(), '');
+    state.set({ session: 'newer', expiresAt: now + 3600000 });
+    state.observe({ authMode: 'core', initialized: true, authenticated: true }, 'newer');
+    assert.equal(state.current(), '');
+  } finally { globalThis.Date = previous; }
+});
+
+test('an older 401 cannot clear a newer login from another mounted surface', async () => {
+  const previous = globalThis.document;
+  globalThis.document = { createElement: tag => new Element(tag) };
+  const { vaultSession } = await import('./session.js');
+  const session = vaultSession('local', 'gss-race-test');
+  session.set({ session: 'old-token', expiresAt: Date.now() + 3600000 });
+  let rejectOld;
+  const root = new Element('root');
+  const api = async (path, init) => {
+    if (path === '/status') return { authMode: 'local', initialized: true, authenticated: true };
+    if (path === '/records') return new Promise((_, reject) => { rejectOld = reject; });
+    if (path === '/templates') return { templates: [] };
+    if (path === '/agents') return { agents: [] };
+    throw Error(path);
+  };
+  const unmount = mountControl({ root, api, modId: 'gss-race-test', runtimeScope: 'local' });
+  try {
+    await flush(); assert.equal(typeof rejectOld, 'function');
+    session.set({ session: 'new-token', expiresAt: Date.now() + 3600000 });
+    rejectOld(Object.assign(new Error('unauthorized'), { status: 401 }));
+    await flush();
+    assert.equal(session.current(), 'new-token');
+  } finally { unmount(); globalThis.document = previous; }
 });
