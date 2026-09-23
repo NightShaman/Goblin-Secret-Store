@@ -181,3 +181,19 @@ test("expiry limits and all-agent ACL explicit", (t) => {
   s.remove(r.id, updated.version);
   assert.equal(s.all().length, 0);
 });
+
+test('audit pagination reaches beyond old 1000 cap with stable date-filtered cursors', t => {
+  const { s } = fixture(t);
+  const insert = s.db.prepare('INSERT INTO audit(at,action,outcome) VALUES(?,?,?)');
+  for (let i = 0; i < 1205; i++) insert.run('2026-09-23T12:00:00.000Z', 'use', 'ok');
+  insert.run('2026-09-22T12:00:00.000Z', 'login', 'ok');
+  let before, ids = [];
+  do {
+    const page = s.auditPage({ before, date: '2026-09-23', limit: 100 });
+    ids.push(...page.events.map(e => e.id)); before = page.nextCursor;
+    if (ids.length === 100) insert.run('2026-09-23T13:00:00.000Z', 'use', 'ok');
+  } while (before);
+  assert.equal(ids.length, 1205); assert.equal(new Set(ids).size, 1205);
+  assert.equal(s.auditPage({ date: '2026-09-21' }).events.length, 0);
+  for (const query of [{ limit: 501 }, { before: 'bad' }, { date: '2026-02-30' }]) assert.throws(() => s.auditPage(query), /audit_query_invalid/);
+});

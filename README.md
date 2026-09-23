@@ -32,4 +32,12 @@ npm test
 npx --yes --package=node@22 node --test server/*.test.mjs ui/*.test.mjs
 ```
 
-Integration tests import the actual sibling `../Burrow-Backend` (override `BURROW_CORE_ROOT`), copy only test mod code to a temporary runtime, load real child IPC, route requests with verified auth, exercise forwarded session headers, core grants, managed consumption/revocation, and reload persistence. They create only temporary databases and synthetic fixtures, never live credentials. Unit tests cover encryption/tamper binding, stale versions, auth transitions, atomic bootstrap, ACL denial, expiry, portable clean-install restore and transactional rejection. No core source changes are required.
+Integration tests import the actual sibling `../Burrow-Backend` (override `BURROW_CORE_ROOT`), copy only test mod code to a temporary runtime, load real child IPC, route requests with verified auth, exercise forwarded session headers, core grants, managed consumption/revocation, and reload persistence. They create only temporary databases and synthetic fixtures, never live credentials. Unit tests cover encryption/tamper binding, stale versions, auth transitions, atomic bootstrap, ACL denial, expiry, portable clean-install restore and transactional rejection. Archive placement requires a Core/UI version supporting the generic `ui.archive` contribution.
+
+## UI placement
+
+Credential management, ACLs and encrypted backup/restore live only in Settings.
+Authenticated audit lives only in Archive → MODS → Goblin Secret Store, with
+UTC date filtering and cursor pagination over the mod-owned retained history.
+There is no control-panel destination. Local passwords/sessions remain in memory;
+changing the Archive date remounts the pane and requires local login again.

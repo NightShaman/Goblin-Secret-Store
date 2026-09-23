@@ -8,6 +8,6 @@
   },
   "scripts": {
     "test": "node --test server/*.test.mjs ui/*.test.mjs",
-    "build": "node --check server/index.mjs && node --check server/store.mjs && node --check ui/control.js && node --check ui/settings.js"
+    "build": "node --check server/index.mjs && node --check server/store.mjs && node --check ui/management.js && node --check ui/settings.js && node --check ui/archive.js"
   }
 }

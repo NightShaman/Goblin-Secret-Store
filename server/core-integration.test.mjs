@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 // Actual sibling core, not a mock host. Override to a separate checkout if needed.
 const core = process.env.BURROW_CORE_ROOT || path.resolve("../Burrow-Backend");
-const { loadMods, cleanupMods, createModRoute } = await import(
+const { loadMods, cleanupMods, createModRoute, modCatalog } = await import(
   `${core}/src/mod-runtime.mjs`
 );
 const { McpSettingsStore } = await import(`${core}/src/mcp-settings-store.mjs`);
@@ -23,14 +23,8 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
   await cp(new URL("./", import.meta.url), path.join(dir, "server"), {
     recursive: true,
   });
-  await writeFile(
-    path.join(dir, "burrow.mod.json"),
-    JSON.stringify({
-      id: "goblin-secret-store",
-      name: "GSS",
-      server: "server/index.mjs",
-    }),
-  );
+  await cp(new URL('../ui/', import.meta.url), path.join(dir, 'ui'), { recursive: true });
+  await cp(new URL('../burrow.mod.json', import.meta.url), path.join(dir, 'burrow.mod.json'));
   const oldData = process.env.GSS_DATA_DIR,
     oldKey = process.env.BURROW_SETTINGS_KEY;
   process.env.GSS_DATA_DIR = path.join(root, "durable");
@@ -72,6 +66,12 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
       });
       return response;
     };
+    let asset;
+    await createModRoute({ mods })({ req: { method: 'GET' }, res: { writeHead(status) { assert.equal(status, 200); }, end(body) { asset = String(body); } }, url: new URL('http://fixture/api/mods/goblin-secret-store/ui/archive.js') });
+    assert.match(asset, /export function mountArchive/);
+    assert.equal(modCatalog(mods)[0].ui.archiveUrl, '/api/mods/goblin-secret-store/ui/archive.js');
+    assert.equal(modCatalog(mods)[0].ui.controlUrl, undefined);
+    assert.equal((await http('GET', '/audit')).status, 401);
     assert.equal((await http("GET", "/records")).status, 401);
     const races = await Promise.all([
       http("POST", "/bootstrap", { password: "fixture-password-long" }),
@@ -104,6 +104,14 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
       headers,
     );
     assert.equal(created.status, 200);
+    const audit = await http('GET', '/audit?limit=1', {}, undefined, headers);
+    assert.equal(audit.status, 200); assert.equal(audit.body.events.length, 1);
+    assert.ok(audit.body.nextCursor);
+    const earlier = await http('GET', `/audit?before=${audit.body.nextCursor}&limit=1`, {}, undefined, headers);
+    assert.equal(earlier.status, 200); assert.ok(earlier.body.events[0].id < audit.body.events[0].id);
+    assert.equal((await http('GET', '/audit?date=invalid', {}, undefined, headers)).status, 400);
+    assert.equal((await http('GET', '/audit?date=1900-01-01', {}, undefined, headers)).body.events.length, 0);
+
     const record = created.body.record;
     grants = new McpSettingsStore({ databasePath, key });
     for (const id of ["one", "two"])

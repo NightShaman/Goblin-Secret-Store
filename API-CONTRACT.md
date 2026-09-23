@@ -25,7 +25,7 @@ Base `/api/mods/goblin-secret-store`. JSON requests/responses. Never log bodies 
 
 ## Audit and portability
 
-- GET `/audit` → `{events:[{id,at,action,outcome,agentId,recordId}]}` newest first; no values/names/passwords.
+- GET `/audit?date=YYYY-MM-DD&before=ID&limit=100` → `{events:[{id,at,action,outcome,agentId,recordId}],nextCursor:string|null}` newest first. All parameters optional; UTC date filter, exclusive ID cursor, page size 1–500. Follow `nextCursor` until null; no 1000-event truncation. No values/names/passwords. Mod retention remains 10,000 events. Management authentication is mandatory.
 - POST `/backup` `{passphrase}` → `{backup:string}` encrypted portable JSON string. Download without logging; minimum 12 chars.
 - POST `/restore` `{passphrase,backup}` → `{ok:true,restored:number}`. Destructively replaces records after complete validation, clears references, restores all ACLs inactive. Requires explicit UI confirmation. Current installation management password stays unchanged. Backup includes all required encryption material and works on clean installations after management bootstrap.
 

@@ -84,11 +84,7 @@ export function activate(context) {
   route("delete", "/records/:id", (r) =>
     store.remove(r.params.id, r.body?.version),
   );
-  route("get", "/audit", () => ({
-    events: store.db
-      .prepare("SELECT * FROM audit ORDER BY id DESC LIMIT 1000")
-      .all(),
-  }));
+  route("get", "/audit", (r) => store.auditPage(r.query));
   route("post", "/backup", (r) => store.backup(r.body?.passphrase));
   route("post", "/restore", (r) =>
     store.restore(r.body?.passphrase, r.body?.backup),

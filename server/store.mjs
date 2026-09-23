@@ -166,6 +166,14 @@ export class Store {
   config(k) {
     return this.db.prepare("SELECT v FROM config WHERE k=?").get(k)?.v;
   }
+  auditPage({ before, date = "", limit = 100 } = {}) {
+    const size = Number(limit), cursor = before === undefined ? Number.MAX_SAFE_INTEGER : Number(before);
+    if (!Number.isSafeInteger(size) || size < 1 || size > 500 || !Number.isSafeInteger(cursor) || cursor < 1 ||
+        (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date))) fail("audit_query_invalid", 400);
+    const rows = this.db.prepare("SELECT * FROM audit WHERE id < ? AND (? = '' OR substr(at,1,10) = ?) ORDER BY id DESC LIMIT ?").all(cursor, date, date, size + 1);
+    const events = rows.slice(0, size);
+    return { events, nextCursor: rows.length > size ? String(events.at(-1).id) : null };
+  }
   audit(action, outcome = "ok", agentId = null, recordId = null) {
     this.db
       .prepare(

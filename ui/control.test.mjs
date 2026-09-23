@@ -1,6 +1,7 @@
+import { mountArchive } from './archive.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mountControl } from './control.js';
+import { mountManagement as mountControl } from './management.js';
 import { settingsSections, mountSettings } from './settings.js';
 class Element {
   constructor(tag) { this.tagName = tag; this.children = []; this.listeners = new Map(); this.textContent = ''; this.value = ''; this.style = {}; this.files = []; this.hidden = false; }
@@ -70,10 +71,17 @@ test('restore is gated by phrase, file, and typed confirmation; presents inactiv
   assert.deepEqual(JSON.parse(calls.find(c => c[0] === '/restore')[1].body), { backup: '{"encrypted":true}', passphrase: 'strong-backup-passphrase' });
   assert.equal(field.children[0].value, '');
 }));
-test('settings mounts only orientation, never a credential form', () => {
+test('settings mounts management without duplicate audit', async () => {
   const old = globalThis.document; globalThis.document = { createElement: tag => new Element(tag) };
-  try { const primary = { replace(node) { this.node = node; }, clear() { this.node = null; } }; const cleanup = mountSettings({ primary }); assert.deepEqual(settingsSections, [{ id: 'vault', label: 'Vault' }]); assert.match(primary.node.descendants().map(n => n.textContent).join(' '), /Manage credentials/); cleanup(); assert.equal(primary.node, null); }
-  finally { globalThis.document = old; }
+  try {
+    const primary = { replace(node) { this.node = node; }, clear() { this.node = null; } };
+    const cleanup = mountSettings({ primary, api: async path => path === '/records' ? { records: [] } : base(path) });
+    await flush();
+    assert.deepEqual(settingsSections, [{ id: 'vault', label: 'Vault' }]);
+    const text = primary.node.descendants().map(n => n.textContent).join(' ');
+    assert.match(text, /New credential/); assert.doesNotMatch(text, /Audit history/);
+    cleanup(); assert.equal(primary.node, null);
+  } finally { globalThis.document = old; }
 });
 test('new credential uses template fields and defaults to denied ACL', async () => fixture((path, init) => {
   if (path === '/records' && !init?.method) return { records: [] };
@@ -165,3 +173,24 @@ test('private key starts masked and multiline mode explicitly warns and can re-m
   find('button', 'Mask private key').click();
   row = rows(root)[0]; assert.equal(rowInput(row, 'Value').type, 'password'); assert.equal(rowInput(row, 'Value').value, 'line1\nline2');
 }));
+
+test('archive authenticates locally, forwards date and walks cursor without management reads', async () => {
+  const old = globalThis.document; globalThis.document = { createElement: tag => new Element(tag) };
+  const root = new Element('root'), calls = [];
+  const cleanup = mountArchive({ root, date: '2026-09-23', api: async (path, init) => {
+    calls.push([path, init]);
+    if (path === '/status') return { authMode: 'local', initialized: true, authenticated: init.headers['X-GSS-Session'] === 'session' };
+    if (path === '/login') return { session: 'session' };
+    assert.match(path, /^\/audit\?/); assert.equal(init.headers['X-GSS-Session'], 'session');
+    const query = new URLSearchParams(path.split('?')[1]); assert.equal(query.get('date'), '2026-09-23');
+    return { events: [{ at: 'now', action: 'use', outcome: 'ok' }], nextCursor: query.has('before') ? null : '42' };
+  } });
+  try {
+    await flush(); assert.equal(calls.some(([p]) => p.startsWith('/audit')), false);
+    root.descendants().find(n => n.type === 'password').value = 'password';
+    root.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
+    const more = root.descendants().find(n => n.textContent === 'Load earlier audit events'); more.click(); await flush();
+    assert.ok(calls.some(([p]) => p.includes('before=42'))); assert.equal(more.hidden, true);
+    assert.equal(calls.some(([p]) => ['/records', '/templates', '/agents'].includes(p)), false);
+  } finally { cleanup(); globalThis.document = old; }
+});

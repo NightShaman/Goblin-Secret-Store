@@ -1,5 +1,5 @@
 /** Operator-facing vault. Sensitive inputs and the local session live only in this mounted instance. */
-export function mountControl({ root, api }) {
+export function mountManagement({ root, api }) {
   const abort = new AbortController();
   let live = true, session = '', status, records = [], templates = [], agents = [], selected = null, busy = false;
   const el = (tag, text, className) => { const n = document.createElement(tag); if (text != null) n.textContent = text; if (className) n.className = className; return n; };
@@ -167,9 +167,6 @@ export function mountControl({ root, api }) {
     }, 'primary')); panel.append(box);
   }
   function extras(container) {
-    const audit = el('details'); audit.append(el('summary', 'Audit history'));
-    const auditBody = el('div'); audit.append(auditBody);
-    audit.addEventListener('toggle', async () => { if (!audit.open) return; auditBody.textContent = 'Loading audit…'; try { const data = await request('/audit'); if (!live || !audit.open) return; auditBody.replaceChildren(); const list = el('ul', null, 'gss-audit'); for (const event of data.events) list.append(el('li', `${event.at || 'Time unavailable'} · ${event.action} · ${event.outcome}${event.agentId ? ` · ${event.agentId}` : ''}${event.recordId ? ` · ${event.recordId}` : ''}`)); auditBody.append(data.events.length ? list : el('p', 'No audit events yet.')); } catch (e) { if (live) auditBody.textContent = `Audit unavailable: ${err(e)}`; } }); container.append(audit);
     const portability = el('details'); portability.append(el('summary', 'Encrypted backup and restore'));
     portability.append(el('p', 'Choose a separate backup passphrase (at least 12 characters). Keep the downloaded file and passphrase somewhere safe. Backups do not include this installation’s login password or audit history.', 'gss-muted'));
     const pass = input('password'); pass.minLength = 12; pass.autocomplete = 'new-password'; portability.append(label('Backup passphrase', pass));
