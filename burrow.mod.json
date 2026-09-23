@@ -1,0 +1,22 @@
+{
+  "id": "goblin-secret-store",
+  "name": "Goblin Secret Store",
+  "version": "1.0.0",
+  "server": "server/index.mjs",
+  "ui": { "control": "ui/control.js", "settings": "ui/settings.js" },
+  "contributions": {
+    "settings": [
+      {
+        "id": "goblin-secret-store",
+        "navigation": {
+          "title": "Goblin Secret Store",
+          "description": "Private credentials and explicit agent access."
+        },
+        "primary": {
+          "title": "Goblin Secret Store",
+          "capability": "settingsUi"
+        }
+      }
+    ]
+  }
+}
