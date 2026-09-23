@@ -192,5 +192,65 @@ test('archive authenticates locally, forwards date and walks cursor without mana
     const more = root.descendants().find(n => n.textContent === 'Load earlier audit events'); more.click(); await flush();
     assert.ok(calls.some(([p]) => p.includes('before=42'))); assert.equal(more.hidden, true);
     assert.equal(calls.some(([p]) => ['/records', '/templates', '/agents'].includes(p)), false);
-  } finally { cleanup(); globalThis.document = old; }
+  } finally { cleanup.unmount(); globalThis.document = old; }
+});
+
+test('Archive date updates retain only the mount-local session, reset pagination, and preserve logout/unmount', async () => {
+  const previous = globalThis.document, storage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  globalThis.document = { createElement: tag => new Element(tag) };
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('Archive must not use localStorage'); } });
+  const root = new Element('root'), calls = [];
+  let release, delay = false, expired = false;
+  const api = async (path, init) => {
+    calls.push([path, init]);
+    if (path === '/status') return { authMode: 'local', initialized: true, authenticated: init.headers['X-GSS-Session'] === 'mount-session' };
+    if (path === '/login') return { session: 'mount-session' };
+    if (path === '/logout') return {};
+    if (path.startsWith('/audit?')) {
+      if (expired) throw Object.assign(new Error('Session expired'), { status: 401 });
+      if (delay) { delay = false; await new Promise(resolve => { release = resolve; }); }
+      return { events: [{ at: path, action: 'read', outcome: 'ok' }], nextCursor: 'next' };
+    }
+    throw new Error(path);
+  };
+  const mount = mountArchive({ root, api, date: '2026-09-23' });
+  try {
+    await flush();
+    const password = root.descendants().find(n => n.type === 'password'); password.value = 'test-password';
+    root.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
+    assert.equal(password.value, '');
+    mount.update({ date: '2026-09-24' }); await flush();
+    assert.equal(calls.at(-1)[0], '/audit?date=2026-09-24');
+    assert.equal(calls.at(-1)[1].headers['X-GSS-Session'], 'mount-session');
+    delay = true;
+    root.descendants().find(n => n.textContent === 'Load earlier audit events').click(); await flush();
+    mount.update({ date: '2026-09-22' }); mount.update({ date: '2026-09-21' });
+    release(); await flush();
+    const audits = calls.filter(([path]) => path.startsWith('/audit?'));
+    assert.equal(audits.at(-1)[0], '/audit?date=2026-09-21');
+    assert.ok(audits.every(([, init]) => init.headers['X-GSS-Session'] === 'mount-session'));
+    assert.equal(calls.filter(([path]) => path === '/login').length, 1);
+    assert.ok(root.descendants().some(n => n.textContent === 'Log out'));
+    assert.ok(!root.descendants().some(n => n.textContent.includes('2026-09-23')));
+    root.descendants().find(n => n.textContent === 'Log out').click(); await flush();
+    assert.equal(calls.find(([path]) => path === '/logout')[1].headers['X-GSS-Session'], 'mount-session');
+    assert.equal(calls.at(-1)[1].headers['X-GSS-Session'], undefined);
+    mount.update({ date: '2026-09-20' }); await flush();
+    assert.ok(root.descendants().some(n => n.type === 'password'));
+    mount.unmount();
+    assert.ok(calls.every(([, init]) => init.signal.aborted));
+    const count = calls.length; mount.update({ date: '' }); await flush(); assert.equal(calls.length, count);
+    const fresh = mountArchive({ root, api, date: '' }); await flush();
+    assert.equal(calls.at(-1)[1].headers['X-GSS-Session'], undefined);
+    root.descendants().find(n => n.type === 'password').value = 'test-password';
+    root.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
+    expired = true; fresh.update({ date: '2026-09-19' }); await flush();
+    assert.ok(root.descendants().some(n => n.textContent === 'Sign in again'));
+    fresh.update({ date: '2026-09-18' }); await flush();
+    assert.equal(calls.at(-1)[1].headers['X-GSS-Session'], undefined);
+    assert.ok(root.descendants().some(n => n.type === 'password')); fresh.unmount();
+  } finally {
+    mount.unmount(); globalThis.document = previous;
+    if (storage) Object.defineProperty(globalThis, 'localStorage', storage); else delete globalThis.localStorage;
+  }
 });
