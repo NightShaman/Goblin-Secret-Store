@@ -6,7 +6,7 @@ Burrow mod providing an operator-managed encrypted credential vault and explicit
 
 Requires Node **22.13+** (`node:sqlite`; tested on 22.23.2 and 24.20.0). No npm runtime dependencies.
 
-The vault lives at **`$HOME/.local/share/goblin-secret-store`**, not in the mod source tree. Set absolute `GSS_DATA_DIR` in the Burrow service environment to relocate it. The directory is mode 0700; `vault.sqlite` and the independent random 32-byte `master.key` are mode 0600. SQLite DELETE journal mode avoids a persistent WAL; protected values are encrypted before reaching SQLite. No core settings/secrets API or core key is used by the vault. Core still owns agent-tool catalog/grants, as required by its bridge.
+The vault lives at **`$BURROW_RUNTIME_ROOT/mod-data/goblin-secret-store`** when the runtime root is configured (stock container: `/data/mod-data/goblin-secret-store`, on its existing persistent `/data` volume). Otherwise it falls back to `$HOME/.local/share/goblin-secret-store`, not the mod source tree. Set absolute `GSS_DATA_DIR` in the Burrow service environment to relocate it. The directory is mode 0700; `vault.sqlite` and the independent random 32-byte `master.key` are mode 0600. SQLite DELETE journal mode avoids a persistent WAL; protected values are encrypted before reaching SQLite. No core settings/secrets API or core key is used by the vault. Core still owns agent-tool catalog/grants, as required by its bridge.
 
 Core `src/mod-distribution.mjs` `swapMod` renames/replaces the complete source directory and deletes its backup after successful activation. Uninstall removes that source directory. Neither touches this separate vault directory: upgrade/re-enable/restart retain records; uninstall intentionally retains the vault. To erase permanently, stop the mod and explicitly delete the vault directory. Do not put `GSS_DATA_DIR` under any source installation directory. Containers **must mount the vault directory on a persistent volume** (or mount the containing home); source-upgrade independence does not imply container filesystem durability. Do not run multiple Burrow instances against the same vault. The OS service account and machine administrator can read the key and DB; this is not protection against host compromise.
 
@@ -27,7 +27,7 @@ Defaults: 1000 records, 64 fields/record, 64 KiB/field, 16 MiB request/export in
 ```sh
 npm run build
 npm test
-npx --yes --package=node@22 node --test server/*.test.mjs
+npx --yes --package=node@22 node --test server/*.test.mjs ui/*.test.mjs
 ```
 
 Integration tests import the actual sibling `../Burrow-Backend` (override `BURROW_CORE_ROOT`), copy only test mod code to a temporary runtime, load real child IPC, route requests with verified auth, exercise forwarded session headers, core grants, managed consumption/revocation, and reload persistence. They create only temporary databases and synthetic fixtures, never live credentials. Unit tests cover encryption/tamper binding, stale versions, auth transitions, atomic bootstrap, ACL denial, expiry, portable clean-install restore and transactional rejection. No core source changes are required.

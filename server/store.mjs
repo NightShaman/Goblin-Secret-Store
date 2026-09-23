@@ -92,10 +92,17 @@ const password = (p) => {
 };
 const bind = (r, f) =>
   JSON.stringify(["gss-v1", r.id, r.version, f.name, f.type, f.protected]);
+export function defaultDataDirectory(env = process.env, home = os.homedir()) {
+  if (env.GSS_DATA_DIR) return env.GSS_DATA_DIR;
+  if (env.BURROW_RUNTIME_ROOT) {
+    if (!path.isAbsolute(env.BURROW_RUNTIME_ROOT)) fail("storage_absolute_required", 500);
+    return path.join(env.BURROW_RUNTIME_ROOT, "mod-data", "goblin-secret-store");
+  }
+  return path.join(home, ".local", "share", "goblin-secret-store");
+}
 export class Store {
   constructor({
-    directory = process.env.GSS_DATA_DIR ||
-      path.join(os.homedir(), ".local", "share", "goblin-secret-store"),
+    directory = defaultDataDirectory(),
     limits = {},
   } = {}) {
     this.limits = {
