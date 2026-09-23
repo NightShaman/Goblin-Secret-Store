@@ -100,3 +100,68 @@ test('local logout clears the session header on subsequent status requests', asy
   assert.equal(calls.find(c => c[0] === '/logout')[1].headers['X-GSS-Session'], 'session');
   assert.equal(calls.filter(c => c[0] === '/status').at(-1)[1].headers['X-GSS-Session'], undefined);
 }));
+const labeled = (root, text) => root.descendants().find(n => n.tagName === 'label' && n.textContent === text)?.children[0];
+const rows = root => root.descendants().filter(n => n.className === 'gss-fields' && n.children.some(c => c.textContent === 'Field name'));
+const rowInput = (row, label) => row.children.find(c => c.textContent === label)?.children[0];
+
+test('add and remove preserve unsaved field edits, protected replacement, and clear intent', async () => fixture((path, init) => {
+  if (path === '/records' && !init?.method) return { records: [{ id: 'r', name: 'Old', template: 'custom', version: 2, fields: [
+    { name: 'public', type: 'text', protected: false, value: 'old' },
+    { name: 'secret', type: 'secret', protected: true, hasValue: true },
+    { name: 'erase', type: 'secret', protected: true, hasValue: true },
+  ], acl: { mode: 'none', agents: [], active: true } }] };
+  if (path === '/records/r' && init?.method === 'PUT') return { record: { id: 'r' } };
+  return base(path);
+}, async ({ root, calls, find }) => {
+  find('button', 'Old').click();
+  let [publicRow, secretRow, eraseRow] = rows(root);
+  rowInput(publicRow, 'Field name').value = 'renamed';
+  rowInput(publicRow, 'Type').value = 'url';
+  rowInput(publicRow, 'Value').value = 'https://new.example';
+  rowInput(secretRow, 'Value').value = 'replacement';
+  eraseRow.children.find(c => c.children.some(child => child.textContent === 'Replace stored value with an empty string')).children[0].checked = true;
+  find('button', 'Add field').click();
+  assert.equal(rowInput(rows(root)[0], 'Value').value, 'https://new.example');
+  assert.equal(rowInput(rows(root)[1], 'Value').value, 'replacement');
+  assert.equal(rows(root)[2].children.find(c => c.children.some(child => child.textContent === 'Replace stored value with an empty string')).children[0].checked, true);
+  const added = rows(root).at(-1);
+  rowInput(added, 'Field name').value = 'temporary';
+  added.children.find(c => c.tagName === 'button' && c.textContent === 'Remove field').click();
+  await root.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
+  assert.deepEqual(JSON.parse(calls.find(c => c[0] === '/records/r' && c[1]?.method === 'PUT')[1].body).fields, [
+    { name: 'renamed', type: 'url', protected: false, value: 'https://new.example' },
+    { name: 'secret', type: 'secret', protected: true, value: 'replacement' },
+    { name: 'erase', type: 'secret', protected: true, value: '' },
+  ]);
+}));
+
+test('protection toggle masks a drafted value immediately and survives field redraw', async () => fixture((path, init) => {
+  if (path === '/records' && !init?.method) return { records: [] };
+  if (path === '/records' && init?.method === 'POST') return { record: { id: 'created' } };
+  return base(path);
+}, async ({ root, calls, find }) => {
+  find('button', 'New credential').click();
+  const template = labeled(root, 'Template'); template.value = 'custom'; template.fire('change');
+  find('button', 'Add field').click();
+  let row = rows(root)[0]; rowInput(row, 'Field name').value = 'api'; rowInput(row, 'Value').value = 'sensitive draft';
+  const checkbox = row.children.find(c => c.children.some(child => child.textContent === 'Protected (write-only)')).children[0]; checkbox.checked = true; checkbox.fire('change');
+  row = rows(root)[0]; assert.equal(rowInput(row, 'Value').type, 'password'); assert.equal(rowInput(row, 'Value').value, 'sensitive draft');
+  find('button', 'Add field').click();
+  assert.equal(rowInput(rows(root)[0], 'Value').type, 'password');
+  rows(root).at(-1).children.find(c => c.tagName === 'button' && c.textContent === 'Remove field').click();
+  await root.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
+  assert.deepEqual(JSON.parse(calls.find(c => c[0] === '/records' && c[1]?.method === 'POST')[1].body).fields[0], { name: 'api', type: 'text', protected: true, value: 'sensitive draft' });
+}));
+
+test('private key starts masked and multiline mode explicitly warns and can re-mask without losing draft', async () => fixture((path, init) => {
+  if (path === '/records') return { records: [] };
+  return { ...base(path), ...(path === '/templates' ? { templates: [{ id: 'ssh-key', fields: [{ name: 'privateKey', type: 'private-key', protected: true }] }] } : {}) };
+}, async ({ root, find }) => {
+  find('button', 'New credential').click();
+  assert.equal(rowInput(rows(root)[0], 'Value').type, 'password');
+  find('button', 'Enter multiline key (visible)').click();
+  let row = rows(root)[0]; assert.equal(rowInput(row, 'Value (visible while editing)').tagName, 'textarea');
+  rowInput(row, 'Value (visible while editing)').value = 'line1\nline2';
+  find('button', 'Mask private key').click();
+  row = rows(root)[0]; assert.equal(rowInput(row, 'Value').type, 'password'); assert.equal(rowInput(row, 'Value').value, 'line1\nline2');
+}));

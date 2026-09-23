@@ -88,6 +88,17 @@ export function mountControl({ root, api }) {
     const basics = el('div', null, 'gss-fields'); basics.append(label('Name (public metadata)', name), label('Template', template)); form.append(basics);
     const fields = el('div'); form.append(el('h3', 'Fields'), el('p', 'Public fields are visible to authorized agents. Protected fields are write-only here. Leave an existing protected field blank to keep its value.', 'gss-muted'), fields);
     let draft = record ? record.fields.map(f => ({ ...f })) : templates.find(t => t.id === template.value)?.fields.map(f => ({ ...f })) || [];
+    function captureFields() {
+      for (const field of draft) {
+        if (!field._nodes) continue;
+        const { fieldName, fieldType, protectedBox, value, clear } = field._nodes;
+        field.name = fieldName.value;
+        field.type = fieldType.value;
+        field.protected = protectedBox.checked;
+        field.editValue = value.value;
+        field.clear = clear?.checked || false;
+      }
+    }
     function drawFields() {
       fields.replaceChildren();
       for (const [index, field] of draft.entries()) {
@@ -95,18 +106,24 @@ export function mountControl({ root, api }) {
         const fieldName = input(); fieldName.value = field.name; fieldName.required = true; fieldName.maxLength = 128;
         const fieldType = el('select'); for (const type of ['text','url','username','credential','secret','token','password','private-key']) { const opt = el('option', type); opt.value = type; fieldType.append(opt); } fieldType.value = field.type;
         const protectedBox = input('checkbox'); protectedBox.checked = field.protected;
-        const value = field.protected && field.type === 'private-key' ? el('textarea') : input(field.protected ? 'password' : 'text'); value.value = field.protected ? '' : field.value || '';
+        // Password inputs are masked even for private keys. Multiline editing requires an explicit visible mode.
+        const multiline = field.protected && field.type === 'private-key' && field.keyVisible;
+        const value = multiline ? el('textarea') : input(field.protected ? 'password' : 'text');
+        value.value = field.editValue ?? (field.protected ? '' : field.value || '');
         value.placeholder = field.protected && field.hasValue ? 'Stored — leave blank to keep' : '';
-        row.append(label('Field name', fieldName), label('Type', fieldType), label('Value', value));
-        let clear; if (field.protected && field.hasValue) { clear = input('checkbox'); const clearLabel = el('label', null, 'gss-choice'); clearLabel.append(clear, el('span', 'Replace stored value with an empty string')); row.append(clearLabel); }
+        row.append(label('Field name', fieldName), label('Type', fieldType), label(multiline ? 'Value (visible while editing)' : 'Value', value));
+        if (field.protected && field.type === 'private-key') row.append(button(multiline ? 'Mask private key' : 'Enter multiline key (visible)', () => { captureFields(); field.keyVisible = !field.keyVisible; drawFields(); }));
+        let clear; if (field.protected && field.hasValue) { clear = input('checkbox'); clear.checked = field.clear || false; const clearLabel = el('label', null, 'gss-choice'); clearLabel.append(clear, el('span', 'Replace stored value with an empty string')); row.append(clearLabel); }
         const toggle = el('label', null, 'gss-choice'); toggle.append(protectedBox, el('span', 'Protected (write-only)')); row.append(toggle);
-        row.append(button('Remove field', () => { draft.splice(index, 1); drawFields(); })); fields.append(row);
+        row.append(button('Remove field', () => { captureFields(); draft.splice(index, 1); drawFields(); })); fields.append(row);
         field._nodes = { fieldName, fieldType, protectedBox, value, clear };
+        fieldType.addEventListener('change', () => { captureFields(); field.keyVisible = false; drawFields(); });
+        protectedBox.addEventListener('change', () => { captureFields(); field.keyVisible = false; drawFields(); });
       }
     }
     drawFields();
     template.addEventListener('change', () => { if (record) { message('Changing a template retains the existing fields; adjust fields explicitly.'); return; } draft = templates.find(t => t.id === template.value)?.fields.map(f => ({ ...f })) || []; drawFields(); });
-    form.append(button('Add field', () => { draft.push({ name: '', type: 'text', protected: false }); drawFields(); }));
+    form.append(button('Add field', () => { captureFields(); draft.push({ name: '', type: 'text', protected: false }); drawFields(); }));
     const actions = el('div', null, 'gss-actions'), save = el('button', 'Save credential', 'primary'); save.type = 'submit'; actions.append(save);
     if (record) actions.append(button('Delete credential', () => {
       const box = el('div', null, 'gss-confirm'); box.append(el('p', `Permanently delete “${record.name}”? Existing references will be revoked.`));
@@ -115,11 +132,12 @@ export function mountControl({ root, api }) {
     form.append(actions);
     form.addEventListener('submit', async e => {
       e.preventDefault(); if (busy) return;
+      captureFields();
       const fieldData = draft.map(f => {
-        const n = f._nodes, next = { name: n.fieldName.value.trim(), type: n.fieldType.value, protected: n.protectedBox.checked };
+        const next = { name: f.name.trim(), type: f.type, protected: f.protected };
         // Only the same protected field may omit value. Blank on a changed/new field is a literal blank.
         const unchanged = record?.fields.some(old => old.name === next.name && old.type === next.type && old.protected === next.protected && old.hasValue);
-        if (!next.protected || n.value.value !== '' || n.clear?.checked || !unchanged) next.value = n.value.value;
+        if (!next.protected || f.editValue !== '' || f.clear || !unchanged) next.value = f.editValue ?? '';
         return next;
       });
       if (new Set(fieldData.map(f => f.name)).size !== fieldData.length || fieldData.some(f => !f.name)) { message('Each field needs a unique name.', true); return; }
