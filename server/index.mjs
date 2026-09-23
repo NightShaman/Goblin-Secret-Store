@@ -92,6 +92,7 @@ export function activate(context) {
   for (const action of ["list", "read", "use"])
     context.tools.register({
       name: `gss_${action}`,
+      availability: "mod-authorized",
       description: `${action} authorized Goblin Secret Store records; protected values are managed runtime references, never plaintext.`,
       inputSchema: {
         type: "object",

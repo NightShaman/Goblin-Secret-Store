@@ -12,7 +12,8 @@ const { McpSettingsStore } = await import(`${core}/src/mcp-settings-store.mjs`);
 const { loadRuntimeMcpCapabilities } = await import(
   `${core}/src/runtime-capability-context.mjs`
 );
-const { grantedMcpTool } = await import(`${core}/src/mcp-menu.mjs`);
+const { grantedMcpTool, mcpCapabilitiesReceipt, mcpProvidersReceipt } = await import(`${core}/src/mcp-menu.mjs`);
+const { executeReviewedProposalActions } = await import(`${core}/src/proposal-executor.mjs`);
 const { protectToolOutput, resolveManagedProtectedBindings } = await import(
   `${core}/src/protected-values.mjs`
 );
@@ -121,26 +122,32 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
         )
         .run(id, id);
     const provider = "mod.goblin-secret-store";
-    let caps = loadRuntimeMcpCapabilities({ databasePath, agentId: "one" });
-    assert.equal(
-      grantedMcpTool({
-        connections: caps.mcpConnections,
-        grants: caps.mcpTools,
-        provider,
-        toolName: "gss_use",
-      }).error,
-      "mcp_tool_not_granted",
-    );
-    grants.setAgentTools("one", [
-      { connectionId: provider, toolName: "gss_use" },
-    ]);
-    caps = loadRuntimeMcpCapabilities({ databasePath, agentId: "one" });
-    const connection = grantedMcpTool({
-      connections: caps.mcpConnections,
-      grants: caps.mcpTools,
-      provider,
-      toolName: "gss_use",
-    }).connection;
+    const caps = loadRuntimeMcpCapabilities({ databasePath, agentId: "one" });
+    const other = loadRuntimeMcpCapabilities({ databasePath, agentId: "two" });
+    assert.equal(grants.agentTools("one").length, 0);
+    assert.equal(grants.agentTools("two").length, 0);
+    assert.equal(mcpProvidersReceipt({ connections: caps.mcpConnections, grants: caps.mcpTools }).providers.find(p => p.id === provider).grantedToolCount, 3);
+    assert.deepEqual(mcpCapabilitiesReceipt({ connections: caps.mcpConnections, grants: caps.mcpTools, provider }).tools.map(t => t.granted), [true, true, true]);
+    const connection = grantedMcpTool({ connections: caps.mcpConnections, grants: caps.mcpTools, provider, toolName: "gss_use" }).connection;
+    assert.ok(connection);
+    const execute = (agentId, capabilities, tool, args = {}, context = {}) => executeReviewedProposalActions({
+      agentId, sessionId: 's', conversationId: 'c', executionContext: { ...capabilities, agentId, conversationId: 'c', protectedValues: new Map(), ...context },
+      actions: [{ index: 0, tool: 'mcp_call', mcpProvider: provider, mcpToolName: tool, mcpArguments: args }],
+      reviews: [{ index: 0, status: 'allowed' }],
+    });
+    const ownList = await execute('one', caps, 'gss_list');
+    assert.deepEqual(ownList.nativeToolResults[0].output.records.map(r => r.id), [record.id]);
+    const hidden = await execute('two', other, 'gss_list');
+    assert.deepEqual(hidden.nativeToolResults[0].output.records, []);
+    for (const tool of ['gss_read', 'gss_use']) {
+      const denial = await execute('two', other, tool, { id: record.id, field: 'token' });
+      assert.equal(denial.nativeToolResults[0].ok, false);
+      assert.equal(JSON.stringify(denial).includes('integration-fixture-value'), false);
+    }
+    const use = await execute('one', caps, 'gss_use', { id: record.id, field: 'token' });
+    assert.equal(use.nativeToolResults[0].ok, true);
+    assert.equal(use.nativeToolResults[0].protection.status, 'protected');
+    assert.equal(grants.agentTools('one').length, 0);
     const caller = { agentId: "one", sessionId: "s", conversationId: "c" };
     const raw = await connection.invoke(
       "gss_use",
@@ -178,15 +185,17 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
       authorize,
     });
     assert.equal(consumed.env.FIXTURE, "integration-fixture-value");
-    grants.setAgentTools("one", []);
     consumed = await resolveManagedProtectedBindings(bindings, registry, {
       caller,
       authorize,
     });
+    assert.equal(consumed.env.FIXTURE, "integration-fixture-value");
+    grants.db.prepare("UPDATE mcp_connections SET enabled=0 WHERE id=?").run(provider);
+    consumed = await resolveManagedProtectedBindings(bindings, registry, { caller, authorize });
     assert.equal(consumed.errors.length, 1);
-    grants.setAgentTools("one", [
-      { connectionId: provider, toolName: "gss_use" },
-    ]);
+    const disabled = await execute("one", caps, "gss_read", { id: record.id });
+    assert.equal(disabled.nativeToolResults[0].ok, false);
+    grants.db.prepare("UPDATE mcp_connections SET enabled=1 WHERE id=?").run(provider);
     assert.equal(
       (
         await http(
