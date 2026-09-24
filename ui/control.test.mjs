@@ -225,8 +225,15 @@ test('archive authenticates locally, forwards date and walks cursor without mana
     await flush(); assert.equal(calls.some(([p]) => p.startsWith('/audit')), false);
     root.descendants().find(n => n.type === 'password').value = 'password';
     root.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
-    const more = root.descendants().find(n => n.textContent === 'Load earlier audit events'); more.click(); await flush();
+    const more = root.descendants().find(n => n.textContent === 'Load earlier events');
+    const rows = () => root.descendants().filter(n => n.tagName === 'tbody').flatMap(n => n.children);
+    assert.match(root.descendants().find(n => n.tagName === 'style').textContent, /\.gss-archive input\{[^}]*background:var\(--surface-input\)/, 'password field uses the themed input style');
+    assert.equal(root.descendants().find(n => n.tagName === 'table')['aria-label'], 'Vault audit events');
+    assert.equal(rows().length, 1);
+    more.click(); await flush();
     assert.ok(calls.some(([p]) => p.includes('before=42'))); assert.equal(more.hidden, true);
+    assert.equal(rows().length, 2, 'earlier pages append to the table');
+    assert.ok(root.descendants().some(n => n.textContent === '2 events shown'));
     assert.equal(calls.some(([p]) => ['/records', '/templates', '/agents'].includes(p)), false);
   } finally { cleanup.unmount(); globalThis.document = old; }
 });
@@ -259,7 +266,7 @@ test('Archive date updates retain the shared session, reset pagination, and pres
     assert.equal(calls.at(-1)[0], '/audit?date=2026-09-24');
     assert.equal(calls.at(-1)[1].headers['X-GSS-Session'], 'mount-session');
     delay = true;
-    root.descendants().find(n => n.textContent === 'Load earlier audit events').click(); await flush();
+    root.descendants().find(n => n.textContent === 'Load earlier events').click(); await flush();
     mount.update({ date: '2026-09-22' }); mount.update({ date: '2026-09-21' });
     release(); await flush();
     const audits = calls.filter(([path]) => path.startsWith('/audit?'));
@@ -383,4 +390,30 @@ test('an older 401 cannot clear a newer login from another mounted surface', asy
     await flush();
     assert.equal(session.current(), 'new-token');
   } finally { unmount(); globalThis.document = previous; }
+});
+
+
+test('Archive renders historical timestamps, missing time, empty date and safe text cells', async () => {
+  const previous = globalThis.document; globalThis.document = { createElement: tag => new Element(tag) };
+  const root = new Element('root');
+  const mount = mountArchive({ root, runtimeScope: 'local', modId: 'gss-audit-format-test', api: async path => {
+    if (path === '/status') return { authMode: 'core', authenticated: true };
+    if (path.startsWith('/audit?')) return path.includes('date=2026-09-22')
+      ? { events: [], nextCursor: null }
+      : { events: [{ at: '2026-09-23T12:34:56.000Z', action: '<script>bad</script>', outcome: 'denied', agentId: 'agent', recordId: 'record' },
+        { at: '', action: 'login', outcome: 'ok', agentId: null, recordId: null }], nextCursor: null };
+    throw new Error(path);
+  } });
+  try {
+    await flush();
+    const table = root.descendants().find(n => n.tagName === 'table');
+    assert.equal(table['aria-label'], 'Vault audit events');
+    assert.equal(root.descendants().find(n => n.tagName === 'time').dateTime, '2026-09-23T12:34:56.000Z');
+    assert.ok(root.descendants().some(n => n.textContent === 'Time unavailable'));
+    assert.ok(root.descendants().some(n => n.tagName === 'td' && n.textContent === '<script>bad</script>'));
+    assert.ok(root.descendants().some(n => n.textContent === '2 events shown'));
+    mount.update({ date: '2026-09-22' }); await flush();
+    assert.equal(root.descendants().some(n => n.tagName === 'table'), false);
+    assert.ok(root.descendants().some(n => n.textContent === 'No vault activity for this date.'));
+  } finally { mount.unmount(); globalThis.document = previous; }
 });
