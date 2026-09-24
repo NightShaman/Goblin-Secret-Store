@@ -39,14 +39,17 @@ test('first-visitor claim uses POST bootstrap and retains session in memory only
   await root.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
   assert.deepEqual(JSON.parse(calls.find(c => c[0] === '/bootstrap')[1].body), { password: 'long-vault-password' });
   assert.equal(calls.find(c => c[0] === '/records')[1].headers['X-GSS-Session'], 'local-session');
-  assert.equal(passwords[0].value, ''); assert.ok(find('button', 'New credential'));
+  assert.equal(passwords[0].value, ''); assert.ok(find('h2', 'New credential'));
 }));
 test('editing omits existing protected value but retains public value', async () => fixture((path, init) => {
   if (path === '/records' && !init?.method) return { records: [{ id: 'r', name: 'Example', template: 'token', version: 2, fields: [{ name: 'token', type: 'token', protected: true, hasValue: true }, { name: 'site', type: 'url', protected: false, value: 'https://example.org' }], acl: { mode: 'none', agents: [], active: true } }] };
   if (path === '/records/r' && init?.method === 'PUT') return { record: { id: 'r' } };
   return base(path);
 }, async ({ root, calls, find }) => {
+  assert.equal(find('h2', 'New credential')?.tagName, 'h2');
+  assert.equal(find('button', 'New credential'), undefined);
   find('button', 'Example').click();
+  assert.ok(find('button', 'Create another credential'));
   assert.equal(find('button', 'Save access'), undefined);
   const form = root.descendants().find(n => n.tagName === 'form'); await form.fire('submit'); await flush();
   const saved = JSON.parse(calls.find(c => c[0] === '/records/r' && c[1]?.method === 'PUT')[1].body);
@@ -57,7 +60,7 @@ test('agent sharing requires explicit all-agent confirmation and excludes creden
   if (path === '/records/r/acl') return { record: { id: 'r' } };
   return base(path);
 }, async ({ root, calls, find }) => {
-  assert.equal(find('button', 'New credential'), undefined);
+  assert.equal(find('h2', 'New credential'), undefined);
   find('button', 'Example').click();
   assert.equal(find('button', 'Save credential'), undefined);
   const scope = root.descendants().find(n => n.tagName === 'select' && n.parent?.textContent === 'Access scope'); scope.value = 'all'; scope.fire('change');
@@ -86,7 +89,7 @@ test('settings mounts management without duplicate audit', async () => {
     const primary = { replace(node) { this.node = node; }, clear() { this.node = null; } };
     const cleanup = mountSettings({ section: 'credentials', primary, runtimeScope: 'local', modId: 'gss-settings-test', api: async path => path === '/records' ? { records: [] } : base(path) });
     await flush();
-    assert.deepEqual(settingsSections.map(s => s.id), ['credentials', 'sharing', 'vault-access', 'backup']);
+    assert.deepEqual(settingsSections.map(s => s.id), ['credentials', 'sharing', 'backup']);
     const text = primary.node.descendants().map(n => n.textContent).join(' ');
     assert.match(text, /New credential/); assert.doesNotMatch(text, /Audit history/);
     cleanup(); assert.equal(primary.node, null);
@@ -102,13 +105,14 @@ test('each Settings selection mounts only its own management surface and clears 
     for (const [section, visible, absent] of [
       ['credentials', 'New credential', 'Download encrypted backup'],
       ['sharing', 'Choose a credential to manage agent access.', 'New credential'],
-      ['vault-access', 'Vault access', 'New credential'],
       ['backup', 'Download encrypted backup', 'New credential'],
     ]) {
       const cleanup = mountSettings({ section, primary, overflow, api, runtimeScope: 'local', modId: 'gss-sections-test' }); await flush();
-      assert.ok((section === 'credentials' ? overflow.node : primary.node).descendants().some(n => n.textContent === visible), `${section} should show ${visible}`);
+      assert.ok(primary.node.descendants().some(n => n.textContent === visible), `${section} should show ${visible}`);
       assert.ok(![...primary.node.descendants(), ...overflow.node.descendants()].some(n => n.textContent === absent), `${section} should not show ${absent}`);
       assert.ok(!has('Audit history'));
+      assert.ok(![...primary.node.descendants(), ...overflow.node.descendants()].some(n => n.tagName === 'h1' && n.textContent === 'Goblin Secret Store'));
+      if (section === 'backup') assert.equal(overflow.node.descendants().length, 0);
       if (section === 'sharing') {
         overflow.node.descendants().find(n => n.tagName === 'button' && n.textContent === 'Existing').click();
         assert.ok(has('Save access'));
@@ -123,9 +127,8 @@ test('new credential uses template fields and defaults to denied ACL', async () 
   if (path === '/records' && init?.method === 'POST') return { record: { id: 'created' } };
   return base(path);
 }, async ({ root, calls, find }) => {
-  find('button', 'New credential').click();
   const form = root.descendants().find(n => n.tagName === 'form');
-  root.descendants().find(n => n.textContent === 'Name (public metadata)').children[0].value = 'Token';
+  root.descendants().find(n => n.textContent === 'Credential name (public)').children[0].value = 'Token';
   await form.fire('submit'); await flush();
   const payload = JSON.parse(calls.find(c => c[0] === '/records' && c[1]?.method === 'POST')[1].body);
   assert.deepEqual(payload, { name: 'Token', template: 'token', fields: [{ name: 'token', type: 'token', protected: true, value: '' }], acl: { mode: 'none', agents: [], active: true } });
@@ -142,9 +145,9 @@ test('local logout clears the session header on subsequent status requests', asy
   find('button', 'Log out').click(); await flush();
   assert.equal(calls.find(c => c[0] === '/logout')[1].headers['X-GSS-Session'], 'session');
   assert.equal(calls.filter(c => c[0] === '/status').at(-1)[1].headers['X-GSS-Session'], undefined);
-}, 'vault-access'));
+}, 'credentials'));
 const labeled = (root, text) => root.descendants().find(n => n.tagName === 'label' && n.textContent === text)?.children[0];
-const rows = root => root.descendants().filter(n => n.className === 'gss-fields' && n.children.some(c => c.textContent === 'Field name'));
+const rows = root => root.descendants().filter(n => n.className === 'gss-fields' && n.children.some(c => c.textContent === 'Field key (public)'));
 const rowInput = (row, label) => row.children.find(c => c.textContent === label)?.children[0];
 
 test('add and remove preserve unsaved field edits, protected replacement, and clear intent', async () => fixture((path, init) => {
@@ -158,17 +161,17 @@ test('add and remove preserve unsaved field edits, protected replacement, and cl
 }, async ({ root, calls, find }) => {
   find('button', 'Old').click();
   let [publicRow, secretRow, eraseRow] = rows(root);
-  rowInput(publicRow, 'Field name').value = 'renamed';
-  rowInput(publicRow, 'Type').value = 'url';
-  rowInput(publicRow, 'Value').value = 'https://new.example';
-  rowInput(secretRow, 'Value').value = 'replacement';
+  rowInput(publicRow, 'Field key (public)').value = 'renamed';
+  rowInput(publicRow, 'Field type').value = 'url';
+  rowInput(publicRow, 'Field value').value = 'https://new.example';
+  rowInput(secretRow, 'Field value').value = 'replacement';
   eraseRow.children.find(c => c.children.some(child => child.textContent === 'Replace stored value with an empty string')).children[0].checked = true;
   find('button', 'Add field').click();
-  assert.equal(rowInput(rows(root)[0], 'Value').value, 'https://new.example');
-  assert.equal(rowInput(rows(root)[1], 'Value').value, 'replacement');
+  assert.equal(rowInput(rows(root)[0], 'Field value').value, 'https://new.example');
+  assert.equal(rowInput(rows(root)[1], 'Field value').value, 'replacement');
   assert.equal(rows(root)[2].children.find(c => c.children.some(child => child.textContent === 'Replace stored value with an empty string')).children[0].checked, true);
   const added = rows(root).at(-1);
-  rowInput(added, 'Field name').value = 'temporary';
+  rowInput(added, 'Field key (public)').value = 'temporary';
   added.children.find(c => c.tagName === 'button' && c.textContent === 'Remove field').click();
   await root.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
   assert.deepEqual(JSON.parse(calls.find(c => c[0] === '/records/r' && c[1]?.method === 'PUT')[1].body).fields, [
@@ -183,14 +186,13 @@ test('protection toggle masks a drafted value immediately and survives field red
   if (path === '/records' && init?.method === 'POST') return { record: { id: 'created' } };
   return base(path);
 }, async ({ root, calls, find }) => {
-  find('button', 'New credential').click();
-  const template = labeled(root, 'Template'); template.value = 'custom'; template.fire('change');
+  const template = labeled(root, 'Credential template'); template.value = 'custom'; template.fire('change');
   find('button', 'Add field').click();
-  let row = rows(root)[0]; rowInput(row, 'Field name').value = 'api'; rowInput(row, 'Value').value = 'sensitive draft';
+  let row = rows(root)[0]; rowInput(row, 'Field key (public)').value = 'api'; rowInput(row, 'Field value').value = 'sensitive draft';
   const checkbox = row.children.find(c => c.children.some(child => child.textContent === 'Protected (write-only)')).children[0]; checkbox.checked = true; checkbox.fire('change');
-  row = rows(root)[0]; assert.equal(rowInput(row, 'Value').type, 'password'); assert.equal(rowInput(row, 'Value').value, 'sensitive draft');
+  row = rows(root)[0]; assert.equal(rowInput(row, 'Field value').type, 'password'); assert.equal(rowInput(row, 'Field value').value, 'sensitive draft');
   find('button', 'Add field').click();
-  assert.equal(rowInput(rows(root)[0], 'Value').type, 'password');
+  assert.equal(rowInput(rows(root)[0], 'Field value').type, 'password');
   rows(root).at(-1).children.find(c => c.tagName === 'button' && c.textContent === 'Remove field').click();
   await root.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
   assert.deepEqual(JSON.parse(calls.find(c => c[0] === '/records' && c[1]?.method === 'POST')[1].body).fields[0], { name: 'api', type: 'text', protected: true, value: 'sensitive draft' });
@@ -200,13 +202,12 @@ test('private key starts masked and multiline mode explicitly warns and can re-m
   if (path === '/records') return { records: [] };
   return { ...base(path), ...(path === '/templates' ? { templates: [{ id: 'ssh-key', fields: [{ name: 'privateKey', type: 'private-key', protected: true }] }] } : {}) };
 }, async ({ root, find }) => {
-  find('button', 'New credential').click();
-  assert.equal(rowInput(rows(root)[0], 'Value').type, 'password');
+    assert.equal(rowInput(rows(root)[0], 'Field value').type, 'password');
   find('button', 'Enter multiline key (visible)').click();
-  let row = rows(root)[0]; assert.equal(rowInput(row, 'Value (visible while editing)').tagName, 'textarea');
-  rowInput(row, 'Value (visible while editing)').value = 'line1\nline2';
+  let row = rows(root)[0]; assert.equal(rowInput(row, 'Field value (visible while editing)').tagName, 'textarea');
+  rowInput(row, 'Field value (visible while editing)').value = 'line1\nline2';
   find('button', 'Mask private key').click();
-  row = rows(root)[0]; assert.equal(rowInput(row, 'Value').type, 'password'); assert.equal(rowInput(row, 'Value').value, 'line1\nline2');
+  row = rows(root)[0]; assert.equal(rowInput(row, 'Field value').type, 'password'); assert.equal(rowInput(row, 'Field value').value, 'line1\nline2');
 }));
 
 test('archive authenticates locally, forwards date and walks cursor without management reads', async () => {
@@ -318,7 +319,7 @@ test('Settings remount and Archive import share only a matching runtime/mod sess
     await primary.node.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
     cleanup(); assert.equal(primary.node, null);
     cleanup = settings({ ...context, section: 'sharing', primary }); await flush();
-    assert.ok(primary.node.descendants().some(n => n.textContent === 'Agent sharing'));
+    assert.ok(primary.node.descendants().some(n => n.textContent === 'Choose a credential to manage agent access.'));
     assert.equal(primary.node.descendants().some(n => n.type === 'password'), false);
     cleanup(); cleanup = null;
     panel = archive({ ...context, root }); await flush();
@@ -335,7 +336,7 @@ test('Settings remount and Archive import share only a matching runtime/mod sess
     panel = archive({ ...context, root }); await flush();
     root.descendants().find(n => n.textContent === 'Log out').click(); await flush();
     panel.unmount(); panel = null;
-    cleanup = settings({ ...context, section: 'vault-access', primary }); await flush();
+    cleanup = settings({ ...context, section: 'credentials', primary }); await flush();
     assert.ok(primary.node.descendants().some(n => n.type === 'password'));
   } finally { cleanup?.(); panel?.unmount(); globalThis.document = previous; }
 });

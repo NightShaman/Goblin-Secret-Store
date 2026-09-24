@@ -45,12 +45,15 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
     catch (e) { if (live) message(err(e), true); }
     finally { busy = false; }
   }
-  function heading(subtitle) {
-    const head = el('header', null, 'gss-head'), title = el('div'); title.append(el('h1', 'Goblin Secret Store'), el('p', subtitle, 'gss-muted'));
-    head.append(title); return head;
+  function logoutButton() {
+    return button('Log out', () => void operation(async () => {
+      const token = session.current();
+      try { await request('/logout', { method: 'POST' }); }
+      finally { session.invalidate(token); await load(); }
+    }, 'Logged out.'));
   }
   function locked() {
-    content.replaceChildren(heading('Operator-managed credentials. Protected values are never displayed after saving.'));
+    content.replaceChildren(el('h2', 'Unlock vault'));
     const first = status.authMode === 'local' && !status.initialized;
     if (first) content.append(el('p', 'First visitor on this trusted network can claim the vault. Isolate the service until the intended operator sets its password. Minimum 12 characters.'));
     else content.append(el('p', status.authMode === 'core' ? 'Sign in to Burrow with a verified operator login to manage this vault.' : 'Unlock this vault with its local password. Sessions stay in memory and expire after one hour.'));
@@ -77,44 +80,37 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
       records = r.records; templates = t.templates; agents = Array.isArray(a) ? a : a.agents || [];
       if (selected && !records.some(record => record.id === selected)) selected = null;
       render();
-    } catch (e) { if (live) { content.replaceChildren(heading('Vault unavailable'), button('Retry', () => void load())); message(`Could not load vault: ${err(e)}`, true); } }
+    } catch (e) { if (live) { content.replaceChildren(el('h2', 'Vault unavailable'), button('Retry', () => void load())); message(`Could not load vault: ${err(e)}`, true); } }
   }
   function render() {
-    const title = section === 'sharing' ? 'Agent sharing' : section === 'backup' ? 'Backup & restore' : section === 'vault-access' ? 'Vault access' : 'Credentials';
-    const head = heading(title);
-    if (section === 'vault-access') {
-      const details = el('section');
-      details.append(el('h2', 'Vault access'), el('p', status.authMode === 'core' ? 'Managed by your verified Burrow operator login.' : 'Vault unlocked for this view. The local session stays in memory and expires after one hour.', 'gss-muted'));
-      if (status.authMode === 'local') details.append(button('Log out', () => void operation(async () => { const token = session.current(); try { await request('/logout', { method: 'POST' }); } finally { session.invalidate(token); await load(); } }, 'Logged out.')));
-      content.replaceChildren(head, details);
-      return;
-    }
     if (section === 'backup') {
-      content.replaceChildren(head);
+      content.replaceChildren();
       extras(content);
+      if (status.authMode === 'local') content.append(logoutButton());
+      detailRoot?.replaceChildren();
       return;
     }
     const layout = el('div', null, detailRoot ? 'gss-primary' : 'gss-layout'), sidebar = el('nav'), panel = el('section', null, detailRoot ? 'gss-primary-panel' : 'gss-panel');
     sidebar.setAttribute('aria-label', 'Credentials');
-    if (section === 'credentials') sidebar.append(button('New credential', () => { selected = 'new'; render(); }, 'primary'));
     const list = el('div', null, 'gss-list');
     if (!records.length) list.append(el('p', section === 'sharing' ? 'No credentials to share yet. Create one under Credentials first.' : 'No credentials yet. Create one to get started.', 'gss-muted'));
     for (const record of records) { const b = button(record.name, () => { selected = record.id; render(); }); b.setAttribute('aria-current', String(selected === record.id)); list.append(b); }
     sidebar.append(list);
+    if (status.authMode === 'local') sidebar.append(logoutButton());
     if (detailRoot) layout.append(panel);
     else layout.append(sidebar, panel);
     const record = records.find(r => r.id === selected);
     if (section === 'sharing' && record) access(panel, record);
-    else if (section === 'credentials' && (selected === 'new' || record)) editor(panel, record);
+    else if (section === 'credentials') editor(panel, record);
     else panel.append(el('h2', 'Select a credential'), el('p', section === 'sharing' ? 'Choose a credential to manage agent access.' : 'Names and public fields are metadata. Never put a secret in them.', 'gss-muted'));
-    content.replaceChildren(head, layout);
+    content.replaceChildren(layout);
     if (detailRoot) detailRoot.replaceChildren(sidebar);
   }
   function editor(panel, record) {
     const form = el('form'); form.append(el('h2', record ? 'Edit credential' : 'New credential'));
     const name = input(); name.required = true; name.maxLength = 256; name.value = record?.name || '';
     const template = el('select'); for (const t of templates) { const option = el('option', t.id.replaceAll('-', ' ')); option.value = t.id; template.append(option); } template.value = record?.template || templates[0]?.id || 'custom';
-    const basics = el('div', null, 'gss-fields'); basics.append(label('Name (public metadata)', name), label('Template', template)); form.append(basics);
+    const basics = el('div', null, 'gss-fields'); basics.append(label('Credential name (public)', name), label('Credential template', template)); form.append(basics);
     const fields = el('div'); form.append(el('h3', 'Fields'), el('p', 'Public fields are visible to authorized agents. Protected fields are write-only here. Leave an existing protected field blank to keep its value.', 'gss-muted'), fields);
     let draft = record ? record.fields.map(f => ({ ...f })) : templates.find(t => t.id === template.value)?.fields.map(f => ({ ...f })) || [];
     function captureFields() {
@@ -140,7 +136,7 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
         const value = multiline ? el('textarea') : input(field.protected ? 'password' : 'text');
         value.value = field.editValue ?? (field.protected ? '' : field.value || '');
         value.placeholder = field.protected && field.hasValue ? 'Stored — leave blank to keep' : '';
-        row.append(label('Field name', fieldName), label('Type', fieldType), label(multiline ? 'Value (visible while editing)' : 'Value', value));
+        row.append(label('Field key (public)', fieldName), label('Field type', fieldType), label(multiline ? 'Field value (visible while editing)' : 'Field value', value));
         if (field.protected && field.type === 'private-key') row.append(button(multiline ? 'Mask private key' : 'Enter multiline key (visible)', () => { captureFields(); field.keyVisible = !field.keyVisible; drawFields(); }));
         let clear; if (field.protected && field.hasValue) { clear = input('checkbox'); clear.checked = field.clear || false; const clearLabel = el('label', null, 'gss-choice'); clearLabel.append(clear, el('span', 'Replace stored value with an empty string')); row.append(clearLabel); }
         const toggle = el('label', null, 'gss-choice'); toggle.append(protectedBox, el('span', 'Protected (write-only)')); row.append(toggle);
@@ -154,6 +150,7 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
     template.addEventListener('change', () => { if (record) { message('Changing a template retains the existing fields; adjust fields explicitly.'); return; } draft = templates.find(t => t.id === template.value)?.fields.map(f => ({ ...f })) || []; drawFields(); });
     form.append(button('Add field', () => { captureFields(); draft.push({ name: '', type: 'text', protected: false }); drawFields(); }));
     const actions = el('div', null, 'gss-actions'), save = el('button', 'Save credential', 'primary'); save.type = 'submit'; actions.append(save);
+    if (record) actions.append(button('Create another credential', () => { selected = null; render(); }));
     if (record) actions.append(button('Delete credential', () => {
       const box = el('div', null, 'gss-confirm'); box.append(el('p', `Permanently delete “${record.name}”? Existing references will be revoked.`));
       box.append(button('Cancel', () => box.remove()), button('Confirm delete', () => void operation(async () => { await write(`/records/${encodeURIComponent(record.id)}`, 'DELETE', { version: record.version }); selected = null; await load(); }, 'Credential deleted.'), 'danger')); form.append(box);
@@ -218,7 +215,7 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
       void operation(async () => { const backup = await selectedFile.text(); const result = await write('/restore', 'POST', { backup, passphrase: phrase }); selected = null; await load(); return result.restored; }, 'Restore completed. Regrant agent access explicitly.');
     }, 'danger')); portability.append(restore); container.append(portability);
   }
-  content.replaceChildren(heading('Loading vault…'));
+  content.replaceChildren(el('p', 'Loading vault…'));
   void load();
   return () => { live = false; abort.abort(); root.replaceChildren(); detailRoot?.replaceChildren(); };
 }

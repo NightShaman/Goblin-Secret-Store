@@ -3,7 +3,6 @@ import { mountManagement } from './management.js';
 export const settingsSections = [
   { id: 'credentials', label: 'Credentials' },
   { id: 'sharing', label: 'Agent sharing' },
-  { id: 'vault-access', label: 'Vault access' },
   { id: 'backup', label: 'Backup & restore' },
 ];
 
