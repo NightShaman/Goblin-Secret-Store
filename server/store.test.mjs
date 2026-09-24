@@ -197,3 +197,33 @@ test('audit pagination reaches beyond old 1000 cap with stable date-filtered cur
   assert.equal(s.auditPage({ date: '2026-09-21' }).events.length, 0);
   for (const query of [{ limit: 501 }, { before: 'bad' }, { date: '2026-02-30' }]) assert.throws(() => s.auditPage(query), /audit_query_invalid/);
 });
+
+test("audit snapshots public credential names at event time and retains them after rename and deletion", (t) => {
+  const { s } = fixture(t);
+  const created = s.put({ ...input, name: "Original credential" });
+  const ref = s.agent("use", { id: created.id, field: "token" }, caller).$burrowManaged;
+  s.resolve(ref.reference, { ...caller, version: ref.version });
+  const updated = s.put({ ...input, name: "Renamed credential", version: created.version }, created.id);
+  s.remove(created.id, updated.version);
+  const events = s.auditPage().events.filter(e => e.recordId === created.id);
+  assert.deepEqual(events.map(e => [e.action, e.recordName]), [
+    ["delete", "Renamed credential"], ["update", "Renamed credential"],
+    ["use", "Original credential"], ["issue", "Original credential"],
+    ["create", "Original credential"],
+  ]);
+  assert.equal(JSON.stringify(events).includes(input.fields[0].value), false);
+  s.audit("read", "denied", "two");
+  assert.equal(s.auditPage().events[0].recordName, null);
+});
+
+test("existing vault audit schema upgrades additively without inventing names for historical rows", (t) => {
+  const f = fixture(t);
+  const r = f.s.put(input);
+  f.s.db.exec("ALTER TABLE audit DROP COLUMN recordName");
+  f.restart();
+  assert.equal(f.s.auditPage().events[0].recordName, null);
+  const updated = f.s.put({ ...input, name: "New name", version: r.version }, r.id);
+  assert.equal(f.s.auditPage().events[0].recordName, updated.name);
+  f.restart();
+  assert.deepEqual(f.s.auditPage().events.slice(0, 2).map(e => e.recordName), ["New name", null]);
+});

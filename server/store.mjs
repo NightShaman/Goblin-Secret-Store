@@ -139,8 +139,12 @@ export class Store {
     this.db = new DatabaseSync(dp);
     chmodSync(dp, 0o600);
     this.db.exec(
-      "PRAGMA journal_mode=DELETE; PRAGMA secure_delete=ON; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS config(k TEXT PRIMARY KEY,v TEXT NOT NULL); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,at TEXT,action TEXT,outcome TEXT,agentId TEXT,recordId TEXT);",
+      "PRAGMA journal_mode=DELETE; PRAGMA secure_delete=ON; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS config(k TEXT PRIMARY KEY,v TEXT NOT NULL); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,at TEXT,action TEXT,outcome TEXT,agentId TEXT,recordId TEXT,recordName TEXT);",
     );
+    // Older vaults have audit rows without labels. Do not infer their historical names
+    // from the current record: it may have been renamed or deleted.
+    if (!this.db.prepare("PRAGMA table_info(audit)").all().some((column) => column.name === "recordName"))
+      this.db.exec("ALTER TABLE audit ADD COLUMN recordName TEXT");
     this.sessions = new Map();
     this.refs = new Map();
     this.mode = null;
@@ -174,10 +178,10 @@ export class Store {
     const events = rows.slice(0, size);
     return { events, nextCursor: rows.length > size ? String(events.at(-1).id) : null };
   }
-  audit(action, outcome = "ok", agentId = null, recordId = null) {
+  audit(action, outcome = "ok", agentId = null, recordId = null, recordName = null) {
     this.db
       .prepare(
-        "INSERT INTO audit(at,action,outcome,agentId,recordId) VALUES(?,?,?,?,?)",
+        "INSERT INTO audit(at,action,outcome,agentId,recordId,recordName) VALUES(?,?,?,?,?,?)",
       )
       .run(
         new Date().toISOString(),
@@ -187,6 +191,7 @@ export class Store {
         typeof recordId === "string" && /^[a-f0-9-]{36}$/.test(recordId)
           ? recordId
           : null,
+        str(recordName) ? recordName : null,
       );
     this.db
       .prepare("DELETE FROM audit WHERE id <= (SELECT MAX(id) FROM audit)-?")
@@ -368,15 +373,16 @@ export class Store {
       this.db
         .prepare("INSERT OR REPLACE INTO records VALUES(?,?)")
         .run(r.id, JSON.stringify(r));
-      this.audit(old ? "update" : "create", "ok", null, r.id);
+      this.audit(old ? "update" : "create", "ok", null, r.id, r.name);
       return this.view(r);
     });
   }
   remove(id, version) {
     return this.transaction(() => {
-      if (this.raw(id).version !== version) fail("version_conflict", 409);
+      const record = this.raw(id);
+      if (record.version !== version) fail("version_conflict", 409);
       this.db.prepare("DELETE FROM records WHERE id=?").run(id);
-      this.audit("delete", "ok", null, id);
+      this.audit("delete", "ok", null, id, record.name);
       return { ok: true };
     });
   }
@@ -422,7 +428,7 @@ export class Store {
         },
         expires: Date.now() + this.limits.refMs,
       });
-      this.audit("issue", "ok", c.agentId, r.id);
+      this.audit("issue", "ok", c.agentId, r.id, r.name);
       return {
         $burrowManaged: {
           type: [
@@ -461,7 +467,7 @@ export class Store {
       const f = r.fields.find((f) => f.name === t.field && f.protected);
       if (!f) fail();
       const value = decrypt(this.key, f.encrypted, bind(r, f));
-      this.audit("use", "ok", c.agentId, r.id);
+      this.audit("use", "ok", c.agentId, r.id, r.name);
       return value;
     } catch {
       this.audit("use", "denied", c?.agentId);

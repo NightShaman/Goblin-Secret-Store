@@ -400,7 +400,8 @@ test('Archive renders historical timestamps, missing time, empty date and safe t
     if (path === '/status') return { authMode: 'core', authenticated: true };
     if (path.startsWith('/audit?')) return path.includes('date=2026-09-22')
       ? { events: [], nextCursor: null }
-      : { events: [{ at: '2026-09-23T12:34:56.000Z', action: '<script>bad</script>', outcome: 'denied', agentId: 'agent', recordId: 'record' },
+      : { events: [{ at: '2026-09-23T12:34:56.000Z', action: '<script>bad</script>', outcome: 'denied', agentId: 'agent', recordId: 'record', recordName: '<script>Old credential</script>' },
+        { at: '', action: 'read', outcome: 'ok', agentId: 'agent', recordId: 'legacy-id', recordName: null },
         { at: '', action: 'login', outcome: 'ok', agentId: null, recordId: null }], nextCursor: null };
     throw new Error(path);
   } });
@@ -411,7 +412,10 @@ test('Archive renders historical timestamps, missing time, empty date and safe t
     assert.equal(root.descendants().find(n => n.tagName === 'time').dateTime, '2026-09-23T12:34:56.000Z');
     assert.ok(root.descendants().some(n => n.textContent === 'Time unavailable'));
     assert.ok(root.descendants().some(n => n.tagName === 'td' && n.textContent === '<script>bad</script>'));
-    assert.ok(root.descendants().some(n => n.textContent === '2 events shown'));
+    assert.ok(root.descendants().some(n => n.tagName === 'th' && n.textContent === 'Credential'));
+    const credentialCells = root.descendants().find(n => n.tagName === 'tbody').children.map(row => row.children.at(-1).textContent);
+    assert.deepEqual(credentialCells, ['<script>Old credential</script>', 'ID: legacy-id', '—']);
+    assert.ok(root.descendants().some(n => n.textContent === '3 events shown'));
     mount.update({ date: '2026-09-22' }); await flush();
     assert.equal(root.descendants().some(n => n.tagName === 'table'), false);
     assert.ok(root.descendants().some(n => n.textContent === 'No vault activity for this date.'));

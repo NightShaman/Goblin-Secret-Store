@@ -117,7 +117,7 @@ export function mountArchive({ root, api, date = '', runtimeScope, modId }) {
         if (!body) {
           const wrap = el('div', null, 'gss-archive-table-wrap'), table = el('table'), head = el('thead'), header = el('tr');
           table.setAttribute('aria-label', 'Vault audit events');
-          for (const text of ['Time (UTC)', 'Action', 'Result', 'Agent', 'Credential ID']) header.append(el('th', text));
+          for (const text of ['Time (UTC)', 'Action', 'Result', 'Agent', 'Credential']) header.append(el('th', text));
           head.append(header); body = el('tbody'); table.append(head, body); wrap.append(table); results.replaceChildren(wrap);
         }
         for (const event of data.events) {
@@ -128,7 +128,9 @@ export function mountArchive({ root, api, date = '', runtimeScope, modId }) {
             stamp.dateTime = event.at; time.append(stamp);
           } else time.textContent = event.at || 'Time unavailable';
           const outcome = el('td', event.outcome || '—', `gss-archive-outcome${event.outcome === 'denied' ? ' gss-archive-denied' : ''}`);
-          row.append(time, el('td', event.action || '—'), outcome, el('td', event.agentId || '—'), el('td', event.recordId || '—'));
+          const credential = typeof event.recordName === 'string' && event.recordName.trim()
+            ? event.recordName : event.recordId ? `ID: ${event.recordId}` : '—';
+          row.append(time, el('td', event.action || '—'), outcome, el('td', event.agentId || '—'), el('td', credential));
           body.append(row); count++;
         }
       }
