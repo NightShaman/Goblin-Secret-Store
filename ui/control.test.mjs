@@ -55,7 +55,7 @@ test('editing omits existing protected value but retains public value', async ()
   const saved = JSON.parse(calls.find(c => c[0] === '/records/r' && c[1]?.method === 'PUT')[1].body);
   assert.deepEqual(saved.fields, [{ name: 'token', type: 'token', protected: true }, { name: 'site', type: 'url', protected: false, value: 'https://example.org' }]);
 }));
-test('agent sharing requires explicit all-agent confirmation and excludes credential editing', async () => fixture((path, init) => {
+test('agent sharing saves explicit all-agent scope without redundant confirmation', async () => fixture((path, init) => {
   if (path === '/records' && !init?.method) return { records: [{ id: 'r', name: 'Example', template: 'token', version: 2, fields: [], acl: { mode: 'none', agents: [], active: true } }] };
   if (path === '/records/r/acl') return { record: { id: 'r' } };
   return base(path);
@@ -64,8 +64,7 @@ test('agent sharing requires explicit all-agent confirmation and excludes creden
   find('button', 'Example').click();
   assert.equal(find('button', 'Save credential'), undefined);
   const scope = root.descendants().find(n => n.tagName === 'select' && n.parent?.textContent === 'Access scope'); scope.value = 'all'; scope.fire('change');
-  find('button', 'Save access').click(); await flush(); assert.equal(calls.some(c => c[0] === '/records/r/acl'), false);
-  root.descendants().find(n => n.tagName === 'input' && n.parent?.children.some(c => c.textContent === 'I understand this grants every agent access to this credential.')).checked = true;
+  assert.doesNotMatch(root.descendants().map(n => n.textContent).join(' '), /I understand this grants every agent access/);
   find('button', 'Save access').click(); await flush();
   assert.deepEqual(JSON.parse(calls.find(c => c[0] === '/records/r/acl')[1].body).acl, { mode: 'all', agents: [], active: true });
 }, 'sharing'));
