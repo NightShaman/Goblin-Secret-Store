@@ -1,5 +1,6 @@
 // Module-scoped, memory-only sessions. Mod loaders reuse this module across Settings and Archive.
 const sessions = new Map();
+const MAX_SESSION_DURATION_MS = 60 * 60 * 1000;
 const key = (scope, modId) => `${scope}\0${modId}`;
 export function vaultSession(scope, modId) {
   if (!scope || !modId) throw new Error('Vault requires an explicit runtime scope and mod identity.');
@@ -15,8 +16,9 @@ export function vaultSession(scope, modId) {
     current() { if (state.token && state.expiresAt <= Date.now()) clear(); return state.token; },
     authenticated() { this.current(); return state.authenticated; },
     set(result) {
-      if (typeof result?.session !== 'string' || !result.session || !Number.isFinite(result.expiresAt) || result.expiresAt <= Date.now()) throw new Error('Invalid vault session response.');
-      state.token = result.session; state.expiresAt = result.expiresAt; state.mode = 'local'; state.authenticated = true;
+      const receivedAt = Date.now(), duration = result?.expiresInMs;
+      if (typeof result?.session !== 'string' || !result.session || !Number.isSafeInteger(duration) || duration <= 0 || duration > MAX_SESSION_DURATION_MS || !Number.isSafeInteger(receivedAt) || receivedAt > Number.MAX_SAFE_INTEGER - duration) throw new Error('Invalid vault session response.');
+      state.token = result.session; state.expiresAt = receivedAt + duration; state.mode = 'local'; state.authenticated = true;
     },
     invalidate(token) { if (state.token === token) clear(); },
     observe(status, sentToken) {

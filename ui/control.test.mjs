@@ -30,7 +30,7 @@ const base = (path) => {
 };
 test('first-visitor claim uses POST bootstrap and retains session in memory only', async () => fixture((path, init) => {
   if (path === '/status') return { authMode: 'local', initialized: Boolean(init?.headers?.['X-GSS-Session']), authenticated: init?.headers?.['X-GSS-Session'] === 'local-session' };
-  if (path === '/bootstrap') return { session: 'local-session', expiresAt: Date.now() + 1000 };
+  if (path === '/bootstrap') return { session: 'local-session', expiresInMs: 1000 };
   if (path === '/records') return { records: [] };
   return base(path);
 }, async ({ root, calls, find }) => {
@@ -225,7 +225,7 @@ test('cached record interaction checks local session expiry before rendering met
   const cleanup = mountControl({ root, runtimeScope: 'local', modId: 'gss-expired-cache-test', api: async (path, init = {}) => {
     const token = init.headers?.['X-GSS-Session'];
     if (path === '/status') return { authMode: 'local', initialized: true, authenticated: token === 'expiring-session' };
-    if (path === '/login') return { session: 'expiring-session', expiresAt: 1010 };
+    if (path === '/login') return { session: 'expiring-session', expiresInMs: 10 };
     if (path === '/records') return { records: [{ id: 'r', name: 'Expiring credential', template: 'custom', version: 1, fields: [{ name: 'public', type: 'text', protected: false, value: 'must-not-render' }], acl: { mode: 'none', agents: [], active: true } }] };
     if (path === '/templates') return { templates: [{ id: 'custom', fields: [] }] };
     if (path === '/agents') return [];
@@ -245,7 +245,7 @@ test('cached record interaction checks local session expiry before rendering met
 
 test('local logout clears the session header on subsequent status requests', async () => fixture((path, init) => {
   if (path === '/status') return { authMode: 'local', initialized: true, authenticated: init?.headers?.['X-GSS-Session'] === 'session' };
-  if (path === '/login') return { session: 'session', expiresAt: Date.now() + 10000 };
+  if (path === '/login') return { session: 'session', expiresInMs: 10000 };
   if (path === '/logout') return { ok: true };
   if (path === '/records') return { records: [] };
   return base(path);
@@ -335,7 +335,7 @@ test('archive authenticates locally, forwards date and walks cursor without mana
   const cleanup = mountArchive({ root, date: '2026-09-23', runtimeScope: 'local', modId: 'gss-archive-test', api: async (path, init) => {
     calls.push([path, init]);
     if (path === '/status') return { authMode: 'local', initialized: true, authenticated: init.headers['X-GSS-Session'] === 'session' };
-    if (path === '/login') return { session: 'session', expiresAt: Date.now() + 3600000 };
+    if (path === '/login') return { session: 'session', expiresInMs: 3600000 };
     assert.match(path, /^\/audit\?/); assert.equal(init.headers['X-GSS-Session'], 'session');
     const query = new URLSearchParams(path.split('?')[1]); assert.equal(query.get('date'), '2026-09-23');
     return { events: [{ at: 'now', action: 'use', outcome: 'ok' }], nextCursor: query.has('before') ? null : '42' };
@@ -366,7 +366,7 @@ test('Archive date updates retain the shared session, reset pagination, and pres
   const api = async (path, init) => {
     calls.push([path, init]);
     if (path === '/status') return { authMode: 'local', initialized: true, authenticated: init.headers['X-GSS-Session'] === 'mount-session' };
-    if (path === '/login') return { session: 'mount-session', expiresAt: Date.now() + 3600000 };
+    if (path === '/login') return { session: 'mount-session', expiresInMs: 3600000 };
     if (path === '/logout') return {};
     if (path.startsWith('/audit?')) {
       if (expired) throw Object.assign(new Error('Session expired'), { status: 401 });
@@ -428,7 +428,7 @@ test('Settings remount and Archive import share only a matching runtime/mod sess
     apiCalls.push([path, init.headers?.['X-GSS-Session']]);
     const authenticated = init.headers?.['X-GSS-Session'] === 'shared-session';
     if (path === '/status') return { authMode: 'local', initialized: true, authenticated };
-    if (path === '/login') return { session: 'shared-session', expiresAt: Date.now() + 3600000 };
+    if (path === '/login') return { session: 'shared-session', expiresInMs: 3600000 };
     if (path === '/records') return { records: [] };
     if (path === '/templates') return { templates: [] };
     if (path === '/agents') return { agents: [] };
@@ -467,23 +467,36 @@ test('Settings remount and Archive import share only a matching runtime/mod sess
   } finally { cleanup?.(); panel?.unmount(); globalThis.document = previous; }
 });
 
-test('shared session expires at server deadline, rejects stale failures and observes auth-mode change', async () => {
+test('shared session uses receipt-relative expiry despite server/browser clock skew and preserves invalidation behavior', async () => {
   const { vaultSession } = await import('./session.js');
   const state = vaultSession('local', 'gss-expiry-test');
   const previous = globalThis.Date;
-  let now = previous.now();
+  let now = 5000000000000;
   globalThis.Date = class extends previous { static now() { return now; } };
   try {
-    state.set({ session: 'old', expiresAt: now + 3600000 });
-    state.set({ session: 'new', expiresAt: now + 3600000 });
+    state.set({ session: 'old', expiresAt: 1000, expiresInMs: 3600000 });
+    assert.equal(state.current(), 'old', 'an absolute server deadline behind the browser clock is ignored');
+    state.set({ session: 'new', expiresAt: 9000000000000, expiresInMs: 3600000 });
     state.invalidate('old'); assert.equal(state.current(), 'new');
     state.observe({ authMode: 'local', initialized: true, authenticated: false }, 'old'); assert.equal(state.current(), 'new');
-    now += 3600000;
-    assert.equal(state.current(), '');
-    state.set({ session: 'newer', expiresAt: now + 3600000 });
+    now += 3599999; assert.equal(state.current(), 'new');
+    now += 1; assert.equal(state.current(), '');
+    state.set({ session: 'newer', expiresAt: -1, expiresInMs: 3600000 });
     state.observe({ authMode: 'core', initialized: true, authenticated: true }, 'newer');
     assert.equal(state.current(), '');
   } finally { globalThis.Date = previous; }
+});
+
+test('shared session rejects missing, non-positive, non-integral and excessive relative lifetimes', async () => {
+  const { vaultSession } = await import('./session.js');
+  const state = vaultSession('local', 'gss-duration-validation-test');
+  for (const expiresInMs of [undefined, 0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 60 * 60 * 1000 + 1]) {
+    assert.throws(() => state.set({ session: 'invalid', expiresAt: Date.now() + 3600000, expiresInMs }), /Invalid vault session response/);
+    assert.equal(state.current(), '');
+  }
+  assert.throws(() => state.set({ session: 'legacy-only', expiresAt: Date.now() + 3600000 }), /Invalid vault session response/);
+  state.set({ session: 'bounded', expiresAt: -1, expiresInMs: 60 * 60 * 1000 });
+  assert.equal(state.current(), 'bounded');
 });
 
 test('an older 401 cannot clear a newer login from another mounted surface', async () => {
@@ -491,7 +504,7 @@ test('an older 401 cannot clear a newer login from another mounted surface', asy
   globalThis.document = { createElement: tag => new Element(tag) };
   const { vaultSession } = await import('./session.js');
   const session = vaultSession('local', 'gss-race-test');
-  session.set({ session: 'old-token', expiresAt: Date.now() + 3600000 });
+  session.set({ session: 'old-token', expiresInMs: 3600000 });
   let rejectOld;
   const root = new Element('root');
   const api = async (path, init) => {
@@ -504,7 +517,7 @@ test('an older 401 cannot clear a newer login from another mounted surface', asy
   const unmount = mountControl({ root, api, modId: 'gss-race-test', runtimeScope: 'local' });
   try {
     await flush(); assert.equal(typeof rejectOld, 'function');
-    session.set({ session: 'new-token', expiresAt: Date.now() + 3600000 });
+    session.set({ session: 'new-token', expiresInMs: 3600000 });
     rejectOld(Object.assign(new Error('unauthorized'), { status: 401 }));
     await flush();
     assert.equal(session.current(), 'new-token');
