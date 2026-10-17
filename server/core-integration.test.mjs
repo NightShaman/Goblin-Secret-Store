@@ -1,14 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, cp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, cp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 // Actual sibling core, not a mock host. Override to a separate checkout if needed.
-const core = process.env.BURROW_CORE_ROOT || path.resolve("../Burrow-Backend");
+const core = path.resolve(process.env.BURROW_CORE_ROOT || fileURLToPath(new URL("../../Burrow-Backend/", import.meta.url)));
+const requireCore = createRequire(path.join(core, "package.json"));
+const { Pool } = requireCore("pg");
+const { createPostgresApplication } = await import(pathToFileURL(`${core}/src/postgres-composition.mjs`));
+const { createManagedPostgresLifecycle } = await import(pathToFileURL(`${core}/src/postgres-lifecycle.mjs`));
 const { loadMods, cleanupMods, createModRoute, modCatalog } = await import(
   `${core}/src/mod-runtime.mjs`
 );
-const { McpSettingsStore } = await import(`${core}/src/mcp-settings-store.mjs`);
 const { loadRuntimeMcpCapabilities } = await import(
   `${core}/src/runtime-capability-context.mjs`
 );
@@ -31,12 +36,28 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
   process.env.GSS_DATA_DIR = path.join(root, "durable");
   const key = Buffer.alloc(32, 42);
   process.env.BURROW_SETTINGS_KEY = key.toString("base64");
-  const databasePath = path.join(root, "core.sqlite");
+  // Always own the cluster: never consume an inherited database URL or socket.
+  // Requires PostgreSQL 17 + pgvector, running as a non-root user.
+  const bin = process.env.BURROW_POSTGRES_BIN_DIR || "/usr/lib/postgresql/17/bin";
+  const socketDir = path.join(root, "socket");
+  const postgres = createManagedPostgresLifecycle({
+    dataDir: path.join(root, "postgres"), socketDir,
+    initdb: path.join(bin, "initdb"), pgCtl: path.join(bin, "pg_ctl"),
+    postgres: path.join(bin, "postgres"), initdbArgs: ["--auth=trust"],
+  });
+  let pool, app;
+  let modDependencies;
   let mods = [];
   let grants;
   try {
-    mods = await loadMods({ runtimeRoot: root, databasePath });
-    assert.equal(mods[0].status, "loaded");
+    await postgres.start();
+    pool = new Pool({ host: socketDir, port: 5432, database: "postgres", user: os.userInfo().username });
+    app = await createPostgresApplication({ pool, encryptionKey: key, runtimeRoot: root, bootstrapSampleIdentities: false });
+    const { stores, modStoreFactory, enabledModIds, modCatalogWriter } = app;
+    modDependencies = { stores, modStoreFactory, enabledModIds, modCatalogWriter };
+    await pool.query("INSERT INTO mod_lifecycle(mod_id,enabled,created_at,updated_at) VALUES($1,TRUE,$2,$2)", ["goblin-secret-store", new Date().toISOString()]);
+    mods = await loadMods({ runtimeRoot: root, ...modDependencies });
+    assert.equal(mods[0]?.status, "loaded", mods[0]?.error);
     const http = async (
       method,
       p,
@@ -114,24 +135,20 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
     assert.equal((await http('GET', '/audit?date=1900-01-01', {}, undefined, headers)).body.events.length, 0);
 
     const record = created.body.record;
-    grants = new McpSettingsStore({ databasePath, key });
+    grants = app.stores.mcp;
     for (const id of ["one", "two"])
-      grants.db
-        .prepare(
-          "INSERT INTO agents(id,name,enabled,available_capabilities,context_config_json,created_at,updated_at) VALUES(?,?,1,'[]','{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
-        )
-        .run(id, id);
+      await app.stores.agents.create({ id, name: id });
     const provider = "mod.goblin-secret-store";
-    const caps = loadRuntimeMcpCapabilities({ databasePath, agentId: "one" });
-    const other = loadRuntimeMcpCapabilities({ databasePath, agentId: "two" });
-    assert.equal(grants.agentTools("one").length, 0);
-    assert.equal(grants.agentTools("two").length, 0);
+    const caps = await loadRuntimeMcpCapabilities({ stores: app.stores, agentId: "one" });
+    const other = await loadRuntimeMcpCapabilities({ stores: app.stores, agentId: "two" });
+    assert.equal((await grants.agentTools("one")).length, 0);
+    assert.equal((await grants.agentTools("two")).length, 0);
     assert.equal(mcpProvidersReceipt({ connections: caps.mcpConnections, grants: caps.mcpTools }).providers.find(p => p.id === provider).grantedToolCount, 3);
     assert.deepEqual(mcpCapabilitiesReceipt({ connections: caps.mcpConnections, grants: caps.mcpTools, provider }).tools.map(t => t.granted), [true, true, true]);
     const connection = grantedMcpTool({ connections: caps.mcpConnections, grants: caps.mcpTools, provider, toolName: "gss_use" }).connection;
     assert.ok(connection);
     const execute = (agentId, capabilities, tool, args = {}, context = {}) => executeReviewedProposalActions({
-      agentId, sessionId: 's', conversationId: 'c', executionContext: { ...capabilities, agentId, conversationId: 'c', protectedValues: new Map(), ...context },
+      agentId, sessionId: 's', conversationId: 'c', executionContext: { stores: app.stores, ...capabilities, agentId, conversationId: 'c', protectedValues: new Map(), ...context },
       actions: [{ index: 0, tool: 'mcp_call', mcpProvider: provider, mcpToolName: tool, mcpArguments: args }],
       reviews: [{ index: 0, status: 'allowed' }],
     });
@@ -147,7 +164,7 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
     const use = await execute('one', caps, 'gss_use', { id: record.id, field: 'token' });
     assert.equal(use.nativeToolResults[0].ok, true);
     assert.equal(use.nativeToolResults[0].protection.status, 'protected');
-    assert.equal(grants.agentTools('one').length, 0);
+    assert.equal((await grants.agentTools('one')).length, 0);
     const caller = { agentId: "one", sessionId: "s", conversationId: "c" };
     const raw = await connection.invoke(
       "gss_use",
@@ -171,8 +188,8 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
       false,
     );
     const bindings = { FIXTURE: protectedResult.protectedValues[0].ref };
-    const authorize = () => {
-      const c = loadRuntimeMcpCapabilities({ databasePath, agentId: "one" });
+    const authorize = async () => {
+      const c = await loadRuntimeMcpCapabilities({ stores: app.stores, agentId: "one" });
       return !grantedMcpTool({
         connections: c.mcpConnections,
         grants: c.mcpTools,
@@ -190,12 +207,12 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
       authorize,
     });
     assert.equal(consumed.env.FIXTURE, "integration-fixture-value");
-    grants.db.prepare("UPDATE mcp_connections SET enabled=0 WHERE id=?").run(provider);
+    await pool.query("UPDATE mcp_connections SET enabled=FALSE WHERE id=$1", [provider]);
     consumed = await resolveManagedProtectedBindings(bindings, registry, { caller, authorize });
     assert.equal(consumed.errors.length, 1);
     const disabled = await execute("one", caps, "gss_read", { id: record.id });
     assert.equal(disabled.nativeToolResults[0].ok, false);
-    grants.db.prepare("UPDATE mcp_connections SET enabled=1 WHERE id=?").run(provider);
+    await pool.query("UPDATE mcp_connections SET enabled=TRUE WHERE id=$1", [provider]);
     assert.equal(
       (
         await http(
@@ -244,8 +261,8 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
       401,
     );
     await cleanupMods(mods);
-    mods = await loadMods({ runtimeRoot: root, databasePath });
-    assert.equal(mods[0].status, "loaded");
+    mods = await loadMods({ runtimeRoot: root, ...modDependencies });
+    assert.equal(mods[0]?.status, "loaded", mods[0]?.error);
     assert.equal(
       (
         await http(
@@ -258,12 +275,18 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
       1,
     );
   } finally {
-    grants?.close();
-    await cleanupMods(mods);
+    // Attempt every closer even when one fails; never leave the private server
+    // running just because application cleanup rejected.
+    const errors = [];
+    for (const close of [() => cleanupMods(mods), () => app?.close(), () => pool?.end(), () => postgres.stop()]) {
+      try { await close(); } catch (error) { errors.push(error); }
+    }
     if (oldData === undefined) delete process.env.GSS_DATA_DIR;
     else process.env.GSS_DATA_DIR = oldData;
     if (oldKey === undefined) delete process.env.BURROW_SETTINGS_KEY;
     else process.env.BURROW_SETTINGS_KEY = oldKey;
-    await rm(root, { recursive: true, force: true });
+    // Retain the owned directory if shutdown failed, for diagnosis/recovery.
+    if (!errors.length) await rm(root, { recursive: true, force: true });
+    else throw new AggregateError(errors, `integration fixture cleanup failed; retained ${root}`);
   }
 });

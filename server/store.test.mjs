@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Store, decrypt } from "./store.mjs";
+import { Store, decrypt, encrypt } from "./store.mjs";
 const input = {
   name: "fixture",
   template: "token",
@@ -226,4 +226,62 @@ test("existing vault audit schema upgrades additively without inventing names fo
   assert.equal(f.s.auditPage().events[0].recordName, updated.name);
   f.restart();
   assert.deepEqual(f.s.auditPage().events.slice(0, 2).map(e => e.recordName), ["New name", null]);
+});
+
+test("restore identities reject every stale mutation across repeated and delete/restore cycles", t => {
+  const f = fixture(t);
+  let s = f.s;
+  const original = s.put(input);
+  const passphrase = "restore-regression-passphrase";
+  const { backup } = s.backup(passphrase);
+  const edited = s.put({ ...input, version: original.version, fields: [{ ...input.fields[0], value: "newer-fixture" }] }, original.id);
+  const stale = new Set([original.version, edited.version]);
+  const ref = s.agent("use", { id: original.id, field: "token" }, caller).$burrowManaged;
+  for (let cycle = 0; cycle < 3; cycle++) {
+    s.restore(passphrase, backup);
+    assert.throws(() => s.resolve(ref.reference, { ...caller, version: ref.version }), /denied/);
+    s = f.restart(); // The identity must survive restart, not just an in-memory epoch.
+    let current = s.view(s.raw(original.id));
+    assert.equal(current.acl.active, false);
+    assert.equal(typeof current.version, "string");
+    assert.equal(stale.has(current.version), false);
+    for (const version of stale) {
+      for (const mutate of [
+        () => s.put({ ...input, version }, original.id),
+        () => s.remove(original.id, version),
+        () => s.setAcl(original.id, { version, acl: input.acl }),
+      ]) assert.throws(mutate, e => e.message === "version_conflict" && e.statusCode === 409);
+      assert.equal(s.raw(original.id).acl.active, false);
+      assert.deepEqual(s.agent("list", {}, caller), { records: [] });
+    }
+    stale.add(current.version);
+    // Valid ordinary edit must not reactivate restored grants.
+    current = s.put({ ...input, version: current.version }, original.id);
+    assert.equal(current.acl.active, false);
+    stale.add(current.version);
+    current = s.setAcl(original.id, { version: current.version, acl: input.acl });
+    const use = s.agent("use", { id: original.id, field: "token" }, caller).$burrowManaged;
+    assert.equal(s.resolve(use.reference, { ...caller, version: use.version }), input.fields[0].value);
+    stale.add(current.version);
+    s.remove(original.id, current.version);
+  }
+});
+
+test("legacy numeric revision ciphertext remains readable and migrates on edit/restore", t => {
+  const { s } = fixture(t);
+  const r = s.raw(s.put(input).id);
+  r.version = 2;
+  const field = r.fields[0];
+  field.encrypted = encrypt(s.key, input.fields[0].value,
+    JSON.stringify(["gss-v1", r.id, r.version, field.name, field.type, field.protected]));
+  s.db.prepare("UPDATE records SET data=? WHERE id=?").run(JSON.stringify(r), r.id);
+  const passphrase = "legacy-regression-passphrase";
+  const { backup } = s.backup(passphrase);
+  const updated = s.put({ ...s.view(r), version: 2 }, r.id);
+  assert.equal(typeof updated.version, "string");
+  s.restore(passphrase, backup);
+  assert.throws(() => s.setAcl(r.id, { version: 2, acl: input.acl }), /version_conflict/);
+  const restored = s.setAcl(r.id, { version: s.raw(r.id).version, acl: input.acl });
+  const ref = s.agent("use", { id: restored.id, field: "token" }, caller).$burrowManaged;
+  assert.equal(s.resolve(ref.reference, { ...caller, version: ref.version }), input.fields[0].value);
 });

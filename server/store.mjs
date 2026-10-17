@@ -325,7 +325,9 @@ export class Store {
       fail("invalid_record", 400);
     const r = {
       id: old?.id || randomUUID(),
-      version: (old?.version || 0) + 1,
+      // Opaque mutation identity, persisted with the record and authenticated in AAD.
+      // Never derive it from imported/current revisions: deleted IDs may return.
+      version: randomUUID(),
       name: input.name,
       template: input.template,
       acl: this.acl(input.acl || { mode: "none", agents: [], active: true }),
@@ -489,7 +491,9 @@ export class Store {
         salt,
         ...encrypt(key, payload, "gss-backup-v1"),
       });
-      if (Buffer.byteLength(backup) > this.limits.bodyBytes)
+      // Match the unchanged restore route JSON framing, including escaping and
+      // the exact supported passphrase (up to 1024 UTF-16 code units).
+      if (Buffer.byteLength(JSON.stringify({ passphrase, backup })) > this.limits.bodyBytes)
         fail("backup_limit", 413);
       this.audit("backup");
       return { backup };
@@ -524,8 +528,8 @@ export class Store {
         if (
           !/^[a-f0-9-]{36}$/.test(r.id) ||
           seen.has(r.id) ||
-          !Number.isSafeInteger(r.version) ||
-          r.version < 1
+          !((Number.isSafeInteger(r.version) && r.version >= 1) ||
+            (typeof r.version === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(r.version)))
         )
           throw Error();
         seen.add(r.id);
@@ -541,7 +545,7 @@ export class Store {
           acl: { ...r.acl, active: false },
         });
         n.id = r.id;
-        n.version = r.version + 1;
+        // Keep the freshly generated identity, never an imported revision.
         n.fields = n.fields.map((f, i) =>
           f.protected
             ? {
