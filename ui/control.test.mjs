@@ -132,6 +132,61 @@ test('new credential uses template fields and defaults to denied ACL', async () 
   const payload = JSON.parse(calls.find(c => c[0] === '/records' && c[1]?.method === 'POST')[1].body);
   assert.deepEqual(payload, { name: 'Token', template: 'token', fields: [{ name: 'token', type: 'token', protected: true, value: '' }], acl: { mode: 'none', agents: [], active: true } });
 }));
+test('two-column logout clears cached metadata from both surfaces and stale buttons cannot redraw it', async () => {
+  const previous = globalThis.document; globalThis.document = { createElement: tag => new Element(tag) };
+  const primary = { replace(node) { this.node = node; }, clear() { this.node = null; } };
+  const overflow = { replace(node) { this.node = node; }, clear() { this.node = null; } };
+  const calls = []; let authenticated = true;
+  const cleanup = mountSettings({ section: 'credentials', primary, overflow, runtimeScope: 'local', modId: 'gss-cache-logout-test', api: async (path, init = {}) => {
+    calls.push([path, init]);
+    if (path === '/status') return { authMode: 'local', initialized: true, authenticated };
+    if (path === '/records') return { records: [{ id: 'r', name: 'Cached credential', template: 'custom', version: 1, fields: [{ name: 'public-metadata', type: 'text', protected: false, value: 'cached-value' }], acl: { mode: 'none', agents: [], active: true } }] };
+    if (path === '/templates') return { templates: [{ id: 'custom', fields: [] }] };
+    if (path === '/agents') return [];
+    if (path === '/logout') { authenticated = false; return { ok: true }; }
+    throw new Error(path);
+  } });
+  try {
+    await flush();
+    const stale = overflow.node.descendants().find(n => n.tagName === 'button' && n.textContent === 'Cached credential');
+    stale.click(); assert.ok(primary.node.descendants().some(n => n.value === 'cached-value'));
+    overflow.node.descendants().find(n => n.textContent === 'Log out').click(); await flush();
+    const visible = [...primary.node.descendants(), ...overflow.node.descendants()];
+    assert.ok(visible.some(n => n.textContent === 'Unlock vault'));
+    assert.ok(!visible.some(n => n.textContent === 'Cached credential' || n.value === 'cached-value'));
+    const before = calls.length; stale.click(); await flush();
+    assert.equal(calls.length, before); assert.ok(!primary.node.descendants().some(n => n.value === 'cached-value'));
+  } finally { cleanup(); globalThis.document = previous; }
+});
+
+test('auth loss clears every concurrently mounted management surface', async () => {
+  const previous = globalThis.document; globalThis.document = { createElement: tag => new Element(tag) };
+  const rootA = new Element('root'), rootB = new Element('root'); let rejectRecords, authenticated = true;
+  const context = { runtimeScope: 'local', modId: 'gss-concurrent-auth-loss-test' };
+  const apiA = async path => {
+    if (path === '/status') return { authMode: 'local', initialized: true, authenticated };
+    if (path === '/records') return { records: [{ id: 'r', name: 'Shared cached credential', template: 'custom', version: 1, fields: [], acl: { mode: 'none', agents: [], active: true } }] };
+    if (path === '/templates') return { templates: [{ id: 'custom', fields: [] }] };
+    if (path === '/agents') return [];
+    throw new Error(path);
+  };
+  const apiB = async path => {
+    if (path === '/status') return { authMode: 'local', initialized: true, authenticated: true };
+    if (path === '/records') return new Promise((_, reject) => { rejectRecords = reject; });
+    if (path === '/templates') return { templates: [] };
+    if (path === '/agents') return [];
+    throw new Error(path);
+  };
+  const cleanupA = mountControl({ root: rootA, api: apiA, ...context });
+  const cleanupB = mountControl({ root: rootB, api: apiB, ...context });
+  try {
+    await flush(); assert.ok(rootA.descendants().some(n => n.textContent === 'Shared cached credential'));
+    authenticated = false; rejectRecords(Object.assign(new Error('Signed out'), { status: 401 })); await flush();
+    assert.ok(!rootA.descendants().some(n => n.textContent === 'Shared cached credential'));
+    assert.ok(!rootB.descendants().some(n => n.textContent === 'Shared cached credential'));
+  } finally { cleanupA(); cleanupB(); globalThis.document = previous; }
+});
+
 test('local logout clears the session header on subsequent status requests', async () => fixture((path, init) => {
   if (path === '/status') return { authMode: 'local', initialized: true, authenticated: init?.headers?.['X-GSS-Session'] === 'session' };
   if (path === '/login') return { session: 'session', expiresAt: Date.now() + 10000 };
@@ -197,16 +252,25 @@ test('protection toggle masks a drafted value immediately and survives field red
   assert.deepEqual(JSON.parse(calls.find(c => c[0] === '/records' && c[1]?.method === 'POST')[1].body).fields[0], { name: 'api', type: 'text', protected: true, value: 'sensitive draft' });
 }));
 
-test('private key starts masked and multiline mode explicitly warns and can re-mask without losing draft', async () => fixture((path, init) => {
-  if (path === '/records') return { records: [] };
+test('private key stays multiline while masked and preserves LF/CRLF drafts through redraw and save', async () => fixture((path, init) => {
+  if (path === '/records' && !init?.method) return { records: [] };
+  if (path === '/records' && init?.method === 'POST') return { record: { id: 'created' } };
   return { ...base(path), ...(path === '/templates' ? { templates: [{ id: 'ssh-key', fields: [{ name: 'privateKey', type: 'private-key', protected: true }] }] } : {}) };
-}, async ({ root, find }) => {
-    assert.equal(rowInput(rows(root)[0], 'Field value').type, 'password');
+}, async ({ root, calls, find }) => {
+  let row = rows(root)[0], value = rowInput(row, 'Field value');
+  assert.equal(value.tagName, 'textarea'); assert.equal(value.className, 'gss-masked-value');
+  value.value = '-----BEGIN KEY-----\r\nline one\nline two\r\n-----END KEY-----';
   find('button', 'Enter multiline key (visible)').click();
-  let row = rows(root)[0]; assert.equal(rowInput(row, 'Field value (visible while editing)').tagName, 'textarea');
-  rowInput(row, 'Field value (visible while editing)').value = 'line1\nline2';
+  row = rows(root)[0]; value = rowInput(row, 'Field value (visible while editing)');
+  assert.equal(value.tagName, 'textarea'); assert.equal(value.value, '-----BEGIN KEY-----\r\nline one\nline two\r\n-----END KEY-----');
   find('button', 'Mask private key').click();
-  row = rows(root)[0]; assert.equal(rowInput(row, 'Field value').type, 'password'); assert.equal(rowInput(row, 'Field value').value, 'line1\nline2');
+  row = rows(root)[0]; value = rowInput(row, 'Field value');
+  assert.equal(value.tagName, 'textarea'); assert.equal(value.className, 'gss-masked-value');
+  assert.equal(value.value, '-----BEGIN KEY-----\r\nline one\nline two\r\n-----END KEY-----');
+  labeled(root, 'Credential name (public)').value = 'SSH key';
+  await root.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
+  const saved = JSON.parse(calls.find(c => c[0] === '/records' && c[1]?.method === 'POST')[1].body);
+  assert.equal(saved.fields[0].value, '-----BEGIN KEY-----\r\nline one\nline two\r\n-----END KEY-----');
 }));
 
 test('archive authenticates locally, forwards date and walks cursor without management reads', async () => {

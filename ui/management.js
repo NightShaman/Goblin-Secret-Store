@@ -4,6 +4,10 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
   const abort = new AbortController();
   const session = vaultSession(runtimeScope, modId);
   let live = true, status, records = [], templates = [], agents = [], selected = null, busy = false;
+  function clearManagementState() {
+    records = []; templates = []; agents = []; selected = null;
+    content?.replaceChildren(); detailRoot?.replaceChildren();
+  }
   const el = (tag, text, className) => { const n = document.createElement(tag); if (text != null) n.textContent = text; if (className) n.className = className; return n; };
   const button = (text, fn, className) => { const n = el('button', text, className); n.type = 'button'; n.addEventListener('click', fn); return n; };
   const label = (text, input) => { const n = el('label', text, 'gss-field'); n.append(input); return n; };
@@ -14,10 +18,11 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
 .gss{box-sizing:border-box;width:100%;min-width:0;color:var(--text);line-height:1.5}.gss *{box-sizing:border-box}.gss [hidden]{display:none!important}
 .gss h1{font-size:24px;margin:0}.gss h2{font-size:18px;margin:0 0 8px}.gss h3{font-size:14px;margin:16px 0 7px}.gss p{margin:6px 0 14px;overflow-wrap:anywhere}.gss .gss-muted{color:var(--text-muted,var(--muted))}.gss .gss-head,.gss .gss-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.gss .gss-head{justify-content:space-between;margin-bottom:20px}
 .gss .gss-layout{display:grid;grid-template-columns:minmax(190px,260px) minmax(0,1fr);gap:24px;align-items:start}.gss .gss-list{display:grid;gap:5px}.gss .gss-list button{text-align:left;width:100%;overflow-wrap:anywhere}.gss .gss-list button[aria-current=true]{border-color:var(--accent-border);background:var(--accent-muted)}
-.gss .gss-primary-panel{min-width:0}.gss .gss-panel{min-width:0;padding-left:24px;border-left:1px solid var(--line)}.gss .gss-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.gss .gss-field{display:grid;gap:5px;min-width:0;font-size:12px;font-weight:700;color:var(--text-muted,var(--muted))}.gss .gss-field input,.gss .gss-field select,.gss .gss-field textarea{width:100%;min-width:0;min-height:36px;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface-input);color:var(--text);font:inherit}.gss .gss-field textarea{min-height:100px;resize:vertical}.gss button{min-height:34px;padding:6px 11px;border:1px solid var(--line);border-radius:6px;background:var(--surface-input);color:var(--text);cursor:pointer;font:inherit}.gss button:hover:not(:disabled){border-color:var(--accent-border);background:var(--surface-hover)}.gss button:disabled{opacity:.55;cursor:not-allowed}.gss button.primary{border-color:var(--accent-border);background:var(--accent-muted);font-weight:700}.gss button.danger{border-color:var(--warning,var(--accent-border))}.gss .gss-actions{margin:16px 0}.gss .gss-notice:not(:empty){padding:9px 0}.gss .gss-notice[role=alert]{color:var(--warning,var(--accent))}.gss .gss-choice{display:flex;align-items:center;gap:8px;margin:6px 0}.gss .gss-choice input{accent-color:var(--accent)}.gss details{margin:22px 0;border-top:1px solid var(--line);padding-top:14px}.gss summary{cursor:pointer;font-weight:700}.gss .gss-audit{list-style:none;padding:0}.gss .gss-audit li{padding:8px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.gss .gss-confirm{padding:12px;border:1px solid var(--warning,var(--accent-border));border-radius:6px}.gss :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.gss .gss-primary-panel{min-width:0}.gss .gss-panel{min-width:0;padding-left:24px;border-left:1px solid var(--line)}.gss .gss-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.gss .gss-field{display:grid;gap:5px;min-width:0;font-size:12px;font-weight:700;color:var(--text-muted,var(--muted))}.gss .gss-field input,.gss .gss-field select,.gss .gss-field textarea{width:100%;min-width:0;min-height:36px;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface-input);color:var(--text);font:inherit}.gss .gss-field textarea{min-height:100px;resize:vertical}.gss .gss-masked-value{-webkit-text-security:disc;text-security:disc}.gss button{min-height:34px;padding:6px 11px;border:1px solid var(--line);border-radius:6px;background:var(--surface-input);color:var(--text);cursor:pointer;font:inherit}.gss button:hover:not(:disabled){border-color:var(--accent-border);background:var(--surface-hover)}.gss button:disabled{opacity:.55;cursor:not-allowed}.gss button.primary{border-color:var(--accent-border);background:var(--accent-muted);font-weight:700}.gss button.danger{border-color:var(--warning,var(--accent-border))}.gss .gss-actions{margin:16px 0}.gss .gss-notice:not(:empty){padding:9px 0}.gss .gss-notice[role=alert]{color:var(--warning,var(--accent))}.gss .gss-choice{display:flex;align-items:center;gap:8px;margin:6px 0}.gss .gss-choice input{accent-color:var(--accent)}.gss details{margin:22px 0;border-top:1px solid var(--line);padding-top:14px}.gss summary{cursor:pointer;font-weight:700}.gss .gss-audit{list-style:none;padding:0}.gss .gss-audit li{padding:8px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.gss .gss-confirm{padding:12px;border:1px solid var(--warning,var(--accent-border));border-radius:6px}.gss :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media(max-width:760px){.gss .gss-layout{grid-template-columns:1fr}.gss .gss-panel{border-left:0;border-top:1px solid var(--line);padding:18px 0 0}.gss .gss-fields{grid-template-columns:1fr}}
 `; view.append(style);
   const content = el('div'); view.append(content, notice); root.replaceChildren(view);
+  const unsubscribe = session.subscribe(() => { if (!live) return; clearManagementState(); void load(); });
   const message = (text, error = false) => { notice.textContent = text; notice.setAttribute('role', error ? 'alert' : 'status'); };
   const err = e => e?.message || 'Request failed';
   async function request(path, options = {}) {
@@ -33,7 +38,10 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
       }
       return result;
     } catch (e) {
-      if ((e?.status === 401 || e?.statusCode === 401) && path !== '/login' && path !== '/bootstrap') session.invalidate(sentToken);
+      if ((e?.status === 401 || e?.statusCode === 401) && path !== '/login' && path !== '/bootstrap') {
+        session.invalidate(sentToken);
+        clearManagementState();
+      }
       throw e;
     }
   }
@@ -75,7 +83,7 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
   async function load() {
     try {
       status = await request('/status'); if (!live) return;
-      if (!status.authenticated) { locked(); return; }
+      if (!status.authenticated) { clearManagementState(); locked(); return; }
       const [r, t, a] = await Promise.all([request('/records'), request('/templates'), request('/agents')]); if (!live) return;
       records = r.records; templates = t.templates; agents = Array.isArray(a) ? a : a.agents || [];
       if (selected && !records.some(record => record.id === selected)) selected = null;
@@ -131,13 +139,15 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
         const fieldName = input(); fieldName.value = field.name; fieldName.required = true; fieldName.maxLength = 128;
         const fieldType = el('select'); for (const type of ['text','url','username','credential','secret','token','password','private-key']) { const opt = el('option', type); opt.value = type; fieldType.append(opt); } fieldType.value = field.type;
         const protectedBox = input('checkbox'); protectedBox.checked = field.protected;
-        // Password inputs are masked even for private keys. Multiline editing requires an explicit visible mode.
-        const multiline = field.protected && field.type === 'private-key' && field.keyVisible;
-        const value = multiline ? el('textarea') : input(field.protected ? 'password' : 'text');
+        // Keep private-key drafts in a textarea in both modes: password inputs normalize away line breaks.
+        const privateKey = field.protected && field.type === 'private-key';
+        const multiline = privateKey && field.keyVisible;
+        const value = privateKey ? el('textarea') : input(field.protected ? 'password' : 'text');
+        if (privateKey && !multiline) { value.className = 'gss-masked-value'; value.autocomplete = 'off'; value.spellcheck = false; }
         value.value = field.editValue ?? (field.protected ? '' : field.value || '');
         value.placeholder = field.protected && field.hasValue ? 'Stored — leave blank to keep' : '';
         row.append(label('Field key (public)', fieldName), label('Field type', fieldType), label(multiline ? 'Field value (visible while editing)' : 'Field value', value));
-        if (field.protected && field.type === 'private-key') row.append(button(multiline ? 'Mask private key' : 'Enter multiline key (visible)', () => { captureFields(); field.keyVisible = !field.keyVisible; drawFields(); }));
+        if (privateKey) row.append(button(multiline ? 'Mask private key' : 'Enter multiline key (visible)', () => { captureFields(); field.keyVisible = !field.keyVisible; drawFields(); }));
         let clear; if (field.protected && field.hasValue) { clear = input('checkbox'); clear.checked = field.clear || false; const clearLabel = el('label', null, 'gss-choice'); clearLabel.append(clear, el('span', 'Replace stored value with an empty string')); row.append(clearLabel); }
         const toggle = el('label', null, 'gss-choice'); toggle.append(protectedBox, el('span', 'Protected (write-only)')); row.append(toggle);
         row.append(button('Remove field', () => { captureFields(); draft.splice(index, 1); drawFields(); })); fields.append(row);
@@ -215,5 +225,5 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
   }
   content.replaceChildren(el('p', 'Loading vault…'));
   void load();
-  return () => { live = false; abort.abort(); root.replaceChildren(); detailRoot?.replaceChildren(); };
+  return () => { live = false; unsubscribe(); abort.abort(); clearManagementState(); root.replaceChildren(); };
 }
