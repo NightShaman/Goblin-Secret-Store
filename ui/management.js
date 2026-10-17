@@ -3,10 +3,14 @@ import { vaultSession } from './session.js';
 export function mountManagement({ root, detailRoot = null, api, section = 'credentials', runtimeScope, modId }) {
   const abort = new AbortController();
   const session = vaultSession(runtimeScope, modId);
-  let live = true, status, records = [], templates = [], agents = [], selected = null, busy = false;
+  let live = true, status, records = [], templates = [], agents = [], selected = null, busy = false, loadGeneration = 0;
   function clearManagementState() {
     records = []; templates = []; agents = []; selected = null;
     content?.replaceChildren(); detailRoot?.replaceChildren();
+  }
+  function invalidateManagementState() {
+    loadGeneration++;
+    clearManagementState();
   }
   const el = (tag, text, className) => { const n = document.createElement(tag); if (text != null) n.textContent = text; if (className) n.className = className; return n; };
   const button = (text, fn, className) => { const n = el('button', text, className); n.type = 'button'; n.addEventListener('click', fn); return n; };
@@ -22,7 +26,7 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
 @media(max-width:760px){.gss .gss-layout{grid-template-columns:1fr}.gss .gss-panel{border-left:0;border-top:1px solid var(--line);padding:18px 0 0}.gss .gss-fields{grid-template-columns:1fr}}
 `; view.append(style);
   const content = el('div'); view.append(content, notice); root.replaceChildren(view);
-  const unsubscribe = session.subscribe(() => { if (!live) return; clearManagementState(); void load(); });
+  const unsubscribe = session.subscribe(() => { if (!live) return; invalidateManagementState(); void load(); });
   const message = (text, error = false) => { notice.textContent = text; notice.setAttribute('role', error ? 'alert' : 'status'); };
   const err = e => e?.message || 'Request failed';
   async function request(path, options = {}) {
@@ -81,16 +85,21 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
     });
   }
   async function load() {
+    const generation = ++loadGeneration;
+    const current = () => live && generation === loadGeneration;
     try {
-      status = await request('/status'); if (!live) return;
-      if (!status.authenticated) { clearManagementState(); locked(); return; }
-      const [r, t, a] = await Promise.all([request('/records'), request('/templates'), request('/agents')]); if (!live) return;
+      const nextStatus = await request('/status'); if (!current()) return;
+      status = nextStatus;
+      if (!status.authenticated || !session.authenticated()) { clearManagementState(); locked(); return; }
+      const [r, t, a] = await Promise.all([request('/records'), request('/templates'), request('/agents')]);
+      if (!current() || !session.authenticated()) return;
       records = r.records; templates = t.templates; agents = Array.isArray(a) ? a : a.agents || [];
       if (selected && !records.some(record => record.id === selected)) selected = null;
       render();
-    } catch (e) { if (live) { content.replaceChildren(el('h2', 'Vault unavailable'), button('Retry', () => void load())); message(`Could not load vault: ${err(e)}`, true); } }
+    } catch (e) { if (current()) { content.replaceChildren(el('h2', 'Vault unavailable'), button('Retry', () => void load())); message(`Could not load vault: ${err(e)}`, true); } }
   }
   function render() {
+    if (!session.authenticated()) { clearManagementState(); return; }
     if (section === 'backup') {
       content.replaceChildren();
       extras(content);
@@ -102,7 +111,7 @@ export function mountManagement({ root, detailRoot = null, api, section = 'crede
     sidebar.setAttribute('aria-label', 'Credentials');
     const list = el('div', null, 'gss-list');
     if (!records.length) list.append(el('p', section === 'sharing' ? 'No credentials to share yet. Create one under Credentials first.' : 'No credentials yet. Create one to get started.', 'gss-muted'));
-    for (const record of records) { const b = button(record.name, () => { selected = record.id; render(); }); b.setAttribute('aria-current', String(selected === record.id)); list.append(b); }
+    for (const record of records) { const b = button(record.name, () => { if (!session.authenticated()) { clearManagementState(); return; } selected = record.id; render(); }); b.setAttribute('aria-current', String(selected === record.id)); list.append(b); }
     sidebar.append(list);
     if (status.authMode === 'local') sidebar.append(logoutButton());
     if (detailRoot) layout.append(panel);

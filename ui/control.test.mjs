@@ -187,6 +187,62 @@ test('auth loss clears every concurrently mounted management surface', async () 
   } finally { cleanupA(); cleanupB(); globalThis.document = previous; }
 });
 
+test('delayed authorized records cannot repopulate metadata after shared logout invalidation', async () => {
+  const previous = globalThis.document; globalThis.document = { createElement: tag => new Element(tag) };
+  const delayedRoot = new Element('root'), logoutRoot = new Element('root');
+  const context = { runtimeScope: 'local', modId: 'gss-delayed-records-logout-test' };
+  let releaseRecords, authenticated = true;
+  const common = async path => {
+    if (path === '/status') return { authMode: 'local', initialized: true, authenticated };
+    if (path === '/templates') return { templates: [{ id: 'custom', fields: [] }] };
+    if (path === '/agents') return [];
+    if (path === '/logout') { authenticated = false; return { ok: true }; }
+    throw new Error(path);
+  };
+  const cleanupDelayed = mountControl({ root: delayedRoot, ...context, api: async path => {
+    if (path === '/records') return new Promise(resolve => { releaseRecords = resolve; });
+    return common(path);
+  } });
+  const cleanupLogout = mountControl({ root: logoutRoot, ...context, api: async path => {
+    if (path === '/records') return { records: [] };
+    return common(path);
+  } });
+  try {
+    await flush();
+    logoutRoot.descendants().find(n => n.textContent === 'Log out').click(); await flush();
+    releaseRecords({ records: [{ id: 'late', name: 'Delayed credential', template: 'custom', version: 1, fields: [], acl: { mode: 'none', agents: [], active: true } }] });
+    await flush();
+    assert.ok(!delayedRoot.descendants().some(n => n.textContent === 'Delayed credential'));
+    assert.ok(delayedRoot.descendants().some(n => n.textContent === 'Unlock vault'));
+  } finally { cleanupDelayed(); cleanupLogout(); globalThis.document = previous; }
+});
+
+test('cached record interaction checks local session expiry before rendering metadata', async () => {
+  const previous = globalThis.document, originalNow = Date.now;
+  globalThis.document = { createElement: tag => new Element(tag) };
+  const root = new Element('root'); let now = 1000;
+  Date.now = () => now;
+  const cleanup = mountControl({ root, runtimeScope: 'local', modId: 'gss-expired-cache-test', api: async (path, init = {}) => {
+    const token = init.headers?.['X-GSS-Session'];
+    if (path === '/status') return { authMode: 'local', initialized: true, authenticated: token === 'expiring-session' };
+    if (path === '/login') return { session: 'expiring-session', expiresAt: 1010 };
+    if (path === '/records') return { records: [{ id: 'r', name: 'Expiring credential', template: 'custom', version: 1, fields: [{ name: 'public', type: 'text', protected: false, value: 'must-not-render' }], acl: { mode: 'none', agents: [], active: true } }] };
+    if (path === '/templates') return { templates: [{ id: 'custom', fields: [] }] };
+    if (path === '/agents') return [];
+    throw new Error(path);
+  } });
+  try {
+    await flush();
+    root.descendants().find(n => n.type === 'password').value = 'password';
+    await root.descendants().find(n => n.tagName === 'form').fire('submit'); await flush();
+    const cached = root.descendants().find(n => n.tagName === 'button' && n.textContent === 'Expiring credential');
+    now = 1011; cached.click(); await flush();
+    assert.ok(root.descendants().some(n => n.textContent === 'Unlock vault'));
+    assert.ok(!root.descendants().some(n => n.value === 'must-not-render'));
+    assert.ok(!root.descendants().some(n => n.textContent === 'Expiring credential'));
+  } finally { cleanup(); Date.now = originalNow; globalThis.document = previous; }
+});
+
 test('local logout clears the session header on subsequent status requests', async () => fixture((path, init) => {
   if (path === '/status') return { authMode: 'local', initialized: true, authenticated: init?.headers?.['X-GSS-Session'] === 'session' };
   if (path === '/login') return { session: 'session', expiresAt: Date.now() + 10000 };

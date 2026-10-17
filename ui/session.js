@@ -13,6 +13,7 @@ export function vaultSession(scope, modId) {
   };
   return {
     current() { if (state.token && state.expiresAt <= Date.now()) clear(); return state.token; },
+    authenticated() { this.current(); return state.authenticated; },
     set(result) {
       if (typeof result?.session !== 'string' || !result.session || !Number.isFinite(result.expiresAt) || result.expiresAt <= Date.now()) throw new Error('Invalid vault session response.');
       state.token = result.session; state.expiresAt = result.expiresAt; state.mode = 'local'; state.authenticated = true;

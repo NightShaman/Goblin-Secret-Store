@@ -40,4 +40,4 @@ Credential management, ACLs and encrypted backup/restore live only in Settings.
 Authenticated audit lives only in Archive → MODS → Goblin Secret Store, with
 UTC date filtering and cursor pagination over the mod-owned retained history.
 There is no control-panel destination. Local passwords/sessions remain in memory;
-Settings and Archive share a memory-only session scoped to runtime/mod identity; date remounts retain that session until logout, expiry, auth-mode change or reload. Authentication loss clears cached management metadata across mounted surfaces.
+Settings and Archive share a memory-only session scoped to runtime/mod identity; date remounts retain that session until logout, expiry, auth-mode change or reload. Authentication loss invalidates in-flight management loads and clears cached management metadata across mounted surfaces; cached record interactions also recheck the current session before rendering metadata.
