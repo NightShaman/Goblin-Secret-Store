@@ -2,7 +2,7 @@
   <img src="docs/assets/hero.png" width="720" alt="Goblin Secret Store encrypted credential vault for Burrow" />
 </p>
 
-# Goblin Secret Store
+# Goblin Secret Store [Burrow Mod]
 
 Goblin Secret Store is a Burrow mod for keeping credentials encrypted at rest and granting agents explicit, record-level access without exposing protected values in the browser.
 
