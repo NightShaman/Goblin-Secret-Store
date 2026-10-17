@@ -105,7 +105,11 @@ test("atomic bootstrap, local session expiry and core transition", (t) => {
     headers: {},
   };
   assert.throws(() => s.require(req), /unauthorized/);
+  const beforeLogin = Date.now();
   const a = s.login(req, true);
+  assert.equal(a.expiresInMs, s.limits.sessionMs);
+  assert.ok(a.expiresAt >= beforeLogin + a.expiresInMs);
+  assert.ok(a.expiresAt <= Date.now() + a.expiresInMs);
   assert.throws(() => s.login(req, true), /already_initialized/);
   req.headers["x-gss-session"] = a.session;
   assert.equal(s.authenticated(req), true);

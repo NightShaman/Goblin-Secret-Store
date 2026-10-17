@@ -5,8 +5,8 @@ Base `/api/mods/goblin-secret-store`. JSON requests/responses. Never log bodies 
 ## Authentication
 
 - GET `/status` → `{authMode:"core"|"local", initialized:boolean, authenticated:boolean}`; no secret metadata.
-- POST `/bootstrap` `{password}` → `{session,expiresAt}`. Only auth-off, first visitor atomically claims local password on a trusted network. Minimum 12 characters. UI must explain trusted-network first-visitor claim.
-- POST `/login` `{password}` → `{session,expiresAt}`; local mode only.
+- POST `/bootstrap` `{password}` → `{session,expiresAt,expiresInMs}`. Only auth-off, first visitor atomically claims local password on a trusted network. Minimum 12 characters. UI must explain trusted-network first-visitor claim. Clients must derive their local expiry from `expiresInMs`; `expiresAt` is informational server time.
+- POST `/login` `{password}` → `{session,expiresAt,expiresInMs}`; local mode only. Clients must not require synchronized server and browser clocks.
 - POST `/logout` → `{ok:true}`.
   All following endpoints require management authentication. Session expires in one hour; mode changes clear local sessions. Keep token in memory.
 

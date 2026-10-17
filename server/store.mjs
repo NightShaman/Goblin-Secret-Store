@@ -230,9 +230,10 @@ export class Store {
       if (v <= Date.now()) this.sessions.delete(k);
     if (this.sessions.size >= 256) fail("session_limit", 429);
     const session = randomBytes(32).toString("base64url"),
-      expiresAt = Date.now() + this.limits.sessionMs;
+      expiresInMs = this.limits.sessionMs,
+      expiresAt = Date.now() + expiresInMs;
     this.sessions.set(session, expiresAt);
-    return { session, expiresAt };
+    return { session, expiresAt, expiresInMs };
   }
   login(req, bootstrap = false) {
     if (this.observe(req.auth) !== "local") fail();
