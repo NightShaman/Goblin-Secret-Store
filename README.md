@@ -30,7 +30,7 @@ Goblin Secret Store has no npm runtime dependencies. See [API-CONTRACT.md](API-C
 4. Install a published version, then explicitly enable the mod. Installation alone does not enable it.
 5. Open **Settings → Goblin Secret Store**.
 
-Use a version tag for stable installations. Following `main` is appropriate only when you intentionally want unreleased changes.
+Use a version tag for stable installations. NightShaman development pushes publish the next calendar-version tag after fast standalone checks, making current mod changes immediately installable for development testing. The complete GSS/Core suite remains part of the coordinated daily public release gate.
 
 ## First credential
 

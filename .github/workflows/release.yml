@@ -1,0 +1,60 @@
+name: Release Goblin Secret Store development package
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: goblin-secret-store-development-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Fast development contract gate
+        run: |
+          npm run build
+          node --test $(find server ui -name '*.test.mjs' ! -name 'core-integration.test.mjs' -print)
+      - name: Assign calendar version
+        id: version
+        run: |
+          set -eu
+          base=$(date -u +%Y.%m.%d)
+          version=$base
+          suffix=0
+          while git ls-remote --exit-code --tags origin "refs/tags/$version" >/dev/null 2>&1; do
+            suffix=$((suffix + 1))
+            version="$base.$suffix"
+          done
+          node scripts/set-release-version.mjs "$version"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Verify development package identity
+        run: node scripts/set-release-version.mjs "${{ steps.version.outputs.version }}" --check
+      - name: Publish development package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add burrow.mod.json package.json
+          git diff --cached --quiet || git commit -m "Release GSS $VERSION"
+          git push origin HEAD:main
+          git tag -a "$VERSION" -m "GSS $VERSION"
+          git push origin "$VERSION"
+          gh release create "$VERSION" \
+            --title "Goblin Secret Store $VERSION (development)" \
+            --notes "NightShaman development package $VERSION from source $(git rev-parse HEAD). Complete GSS/Core validation and public promotion run separately."
