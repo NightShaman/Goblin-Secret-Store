@@ -157,7 +157,8 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
     const hidden = await execute('two', other, 'gss_list');
     assert.deepEqual(hidden.nativeToolResults[0].output.records, []);
     for (const tool of ['gss_read', 'gss_use']) {
-      const denial = await execute('two', other, tool, { id: record.id, field: 'token' });
+      const args = tool === 'gss_use' ? { id: record.id, field: 'token' } : { id: record.id };
+      const denial = await execute('two', other, tool, args);
       assert.equal(denial.nativeToolResults[0].ok, false);
       assert.equal(JSON.stringify(denial).includes('integration-fixture-value'), false);
     }
@@ -166,9 +167,17 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
     assert.equal(use.nativeToolResults[0].protection.status, 'protected');
     assert.equal((await grants.agentTools('one')).length, 0);
     const caller = { agentId: "one", sessionId: "s", conversationId: "c" };
+    await assert.rejects(
+      connection.invoke(
+        "gss_use",
+        { id: record.id, field: "token", agentId: "two" },
+        { context: caller },
+      ),
+      (error) => error.code === "mod_route_failed" && error.statusCode === 400,
+    );
     const raw = await connection.invoke(
       "gss_use",
-      { id: record.id, field: "token", agentId: "two" },
+      { id: record.id, field: "token" },
       { context: caller },
     );
     const registry = new Map();
