@@ -4,6 +4,8 @@
 
 # Goblin Secret Store [Burrow Mod]
 
+[Read the user documentation](https://gss-docs.blissful-psychosis.com/)
+
 Goblin Secret Store is a Burrow mod for keeping credentials encrypted at rest and granting agents explicit, record-level access without exposing protected values in the browser.
 
 Operators add and replace credentials in Settings, choose which agents can use each record, and handle backup and recovery. Authorized agents can discover records and request protected values through Burrow's managed-reference tools.
@@ -30,7 +32,7 @@ Goblin Secret Store has no npm runtime dependencies. See [API-CONTRACT.md](API-C
 4. Install a published version, then explicitly enable the mod. Installation alone does not enable it.
 5. Open **Settings → Goblin Secret Store**.
 
-Use a version tag for stable installations. NightShaman development pushes publish the next calendar-version tag after fast standalone checks, making current mod changes immediately installable for development testing. The complete GSS/Core suite remains part of the coordinated daily public release gate.
+Use a published version tag for stable installations. Review the public release notes before updating.
 
 ## First credential
 

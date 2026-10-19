@@ -1,0 +1,85 @@
+site_name: Goblin Secret Store
+site_description: Store credentials, grant agent access, and recover your Burrow vault
+site_url: https://gss-docs.blissful-psychosis.com/
+repo_url: https://github.com/GoblinKing-Burrow/Goblin-Secret-Store
+repo_name: GoblinKing-Burrow/Goblin-Secret-Store
+edit_uri: ""
+strict: true
+
+theme:
+  name: material
+  language: en
+  logo: assets/hero.png
+  favicon: assets/hero.png
+  font: false
+  palette:
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+plugins:
+  - search
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+    absolute_links: warn
+  links:
+    not_found: warn
+    anchors: warn
+    absolute_links: warn
+    unrecognized_links: warn
+extra_css:
+  - assets/stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - Get started:
+      - Install GSS: installation.md
+      - Operator authentication: authentication.md
+      - Create and edit credentials: credentials.md
+      - Let agents use credentials: agents.md
+  - Manage the vault:
+      - Agent access control: access.md
+      - Export, import, and recovery: backup.md
+      - Storage and updates: storage.md
+      - Troubleshooting: troubleshooting.md
+  - Reference:
+      - Security and trust: security.md
+      - Configuration: configuration.md
+      - API reference: api.md
+      - Source and coverage: source-map.md
