@@ -23,3 +23,9 @@ Use a published version tag for stable installations. Review the [public release
 
 ## After installation
 Continue with [your first credential](credentials.md). Installing the mod does not create or back up your secrets for you.
+
+## Automatic operating skill
+
+On compatible Core and mod builds that declare managed skills, loading this mod automatically supplies the `goblin-secret-store` skill from [Burrow-Skills](https://github.com/GoblinKing-Burrow/Burrow-Skills/tree/main/goblin-secret-store). Core maintains the installed copy as read-only and refreshes managed skills at startup, on mod lifecycle changes, and on its default six-hour schedule. You do not paste, edit, or assign that managed copy manually. The skill provides instructions; it does not grant tool or data access.
+
+The public **2026.10.19** mod snapshot does not yet declare this managed skill. Automatic mod-managed delivery requires both the newer manifest and a Core build that supports it; updating only the skill repository cannot add the missing integration. See [how managed skills work](https://burrow-docs.blissful-psychosis.com/burrow-skills/managed-skills/).
