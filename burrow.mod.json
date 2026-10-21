@@ -1,7 +1,7 @@
 {
   "id": "goblin-secret-store",
   "name": "Goblin Secret Store",
-  "version": "2026.10.19.1",
+  "version": "2026.10.21",
   "managedSkills": [
     {
       "id": "goblin-secret-store",
