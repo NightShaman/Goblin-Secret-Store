@@ -89,6 +89,28 @@ export function activate(context) {
   route("post", "/restore", (r) =>
     store.restore(r.body?.passphrase, r.body?.backup),
   );
+  context.secretReferences?.register({
+    scheme: "gss",
+    list: () => ({
+      references: store.all().flatMap((record) => record.fields
+        .filter((field) => field.protected)
+        .map((field) => ({
+          reference: `{{gss:${record.id}/${encodeURIComponent(field.name)}}}`,
+          label: `${record.name} — ${field.name}`,
+          type: ["credential", "secret", "token", "password", "private-key"].includes(field.type) ? field.type : "secret",
+          ...Object.fromEntries(record.fields.filter((candidate) => !candidate.protected && ["username", "url", "service"].includes(candidate.type)).map((candidate) => [candidate.type, candidate.value])),
+        }))),
+    }),
+    resolve: (reference) => {
+      const match = typeof reference === "string" ? reference.match(/^\{\{gss:([a-f0-9-]{36})\/([^{}]+)\}\}$/) : null;
+      if (!match) fail("invalid_reference", 400);
+      const record = store.raw(match[1]);
+      const name = decodeURIComponent(match[2]);
+      const field = record.fields.find((candidate) => candidate.protected && candidate.name === name);
+      if (!field) fail("invalid_reference", 400);
+      return { value: store.protectedValue(record, field) };
+    },
+  });
   for (const action of ["list", "read", "use"])
     context.tools.register({
       name: `gss_${action}`,

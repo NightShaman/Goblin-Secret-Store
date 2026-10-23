@@ -126,6 +126,11 @@ test("actual core child IPC routes/auth header/grants/managed consume/revocation
       headers,
     );
     assert.equal(created.status, 200);
+    assert.deepEqual(mods[0].secretReferenceSchemes, ["gss"]);
+    const references = await mods[0].host.invoke("secret-reference-list:gss", {});
+    assert.equal(JSON.stringify(references).includes("integration-fixture-value"), false);
+    assert.deepEqual(references.references.map((entry) => entry.label), ["fixture — token"]);
+    assert.deepEqual(await mods[0].host.invoke("secret-reference-resolve:gss", references.references[0].reference), { value: "integration-fixture-value" });
     const audit = await http('GET', '/audit?limit=1', {}, undefined, headers);
     assert.equal(audit.status, 200); assert.equal(audit.body.events.length, 1);
     assert.ok(audit.body.nextCursor);

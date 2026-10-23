@@ -453,6 +453,10 @@ export class Store {
       fail();
     }
   }
+  protectedValue(record, field) {
+    if (!record || !field?.protected || !record.fields.includes(field)) fail();
+    return decrypt(this.key, field.encrypted, bind(record, field));
+  }
   resolve(ref, c) {
     try {
       const t = this.refs.get(ref);
