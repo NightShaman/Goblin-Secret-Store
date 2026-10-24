@@ -32,3 +32,7 @@ Base `/api/mods/goblin-secret-store`. JSON requests/responses. Never log bodies 
 ## Agent tools
 
 `gss_list`, `gss_read {id}`, `gss_use {id,field}`. Only authorized metadata/public fields; protected use returns `$burrowManaged`, never plaintext. Agent identity comes solely from runtime caller context, never arguments. These tools are `mod-authorized`: a live enabled provider is available without stored per-agent Core tool grants. The record ACL authorizes both issuance and consumption; removing a Core per-agent tool grant does not revoke access. Revoke the record ACL or disable the provider. Consumption rechecks caller tuple, exact record version, expiry, current ACL and live provider availability. Grants do not restrict destination/command/task and revocation cannot retract plaintext already delivered.
+
+## Core credential-reference provider
+
+On compatible hosts, GSS registers scheme `gss` with `context.secretReferences`. Its catalog contains one reference per protected field, labeled with record and field names, plus applicable public metadata. Catalog output does not contain protected values. Resolution returns the protected field to Core's credential consumer. These are host capabilities, not additional HTTP management endpoints or new agent tools. Existing `gss_list`, `gss_read` and `gss_use` behavior remains separate; see [operator references](agents.md#operator-credential-references-in-core-settings).
